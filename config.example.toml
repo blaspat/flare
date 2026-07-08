@@ -1,0 +1,39 @@
+# Flare — Edge Mesh Configuration
+# Path: /etc/flare.toml or $HOME/.config/flare.toml
+
+[node]
+name = "node-alpha"                # Unique node name in the mesh
+listen = ":9721"                   # WebSocket listen address for peer connections
+data_dir = "/var/lib/flare"        # Directory for synced files and state
+log_level = "info"                 # debug | info | warn | error
+
+[mesh]
+peers = [                          # Static peer addresses (optional, for bootstrap)
+  # "ws://node-beta.local:9721",
+  # "wss://10.0.0.42:9721",
+]
+discovery = "mdns"                 # "mdns" | "static" | "both"
+reconnect_interval = "10s"         # Time between reconnection attempts
+
+[sync]
+watch_dirs = [                     # Directories to sync across the mesh
+  { path = "./shared", tag = "default" },
+]
+poll_interval = "5s"               # File system poll interval
+chunk_size = 65536                 # Transfer chunk size in bytes
+
+[cron]
+enabled = true                     # Enable distributed cron scheduler
+history_size = 100                 # Max completed job history entries
+
+[[cron.jobs]]
+name = "disk-check"
+schedule = "0 * * * *"            # Every hour
+command = "df -h /"
+timeout = "30s"
+
+[[cron.jobs]]
+name = "heartbeat"
+schedule = "* * * * *"            # Every minute
+command = "echo 'alive' >> /tmp/flare-heartbeat"
+timeout = "10s"
