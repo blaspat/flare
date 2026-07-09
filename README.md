@@ -29,7 +29,10 @@ TOML config file.
 # Build
 go build -o flare .
 
-# Configure
+# Interactive setup — no config file editing needed
+./flare init
+
+# Or use the example config directly
 cp config.example.toml flare.toml
 # Edit flare.toml — set node name, peers, watch dirs
 
@@ -116,22 +119,52 @@ timeout = "10s"
 ## Usage
 
 ```
-  flare start              Start the mesh node (server mode)
-  flare join <addr>        Join an existing mesh at address
-  flare status             Show node and mesh status
-  flare run <job-name>     Run a cron job immediately
-  flare help               Show this help
+  flare init                Generate a config file interactively
+  flare start               Start the mesh node (server mode)
+  flare start -d            Start in background (daemon)
+  flare join <addr>         Join an existing mesh at address
+  flare status              Show node and mesh status
+  flare run <job-name>      Run a cron job immediately
+  flare help                Show this help
+```
+
+### `flare init`
+
+Walks you through node setup interactively — no manual TOML editing.
+Prompts for node name, listen address, data directory, peer addresses,
+sync directories, and optional cron jobs. Creates the config file and
+data directories.
+
+```bash
+$ flare init
+  ⚡ Flare Setup
+
+  Press Enter to accept defaults.
+
+  Node name [vpn-instance]:
+  Listen address [:9721]:
+  Data directory [/home/user/.flare]:
+  Peer addresses (comma-separated) []: wss://flare.example.com/mesh
+  Sync directories (comma-separated) [/home/user/.flare/shared]:
+  Add a cron job? (name:schedule:command) []:
+
+  ✓ Config written to flare.toml
+
+  Run `FLARE_CONFIG=flare.toml flare start` to start the node.
 ```
 
 ### `flare start`
 
 Starts the node in server mode: listens for WebSocket peers, connects to
 static peers and discovered mDNS nodes, starts file sync and cron subsystems.
-Blocks until SIGINT.
+Blocks until SIGINT (or use `-d` to daemonize).
 
 ```bash
 # Start with verbose debug logging
 ./flare start -v
+
+# Start in background
+./flare start -d
 ```
 
 ### `flare join <addr>`
