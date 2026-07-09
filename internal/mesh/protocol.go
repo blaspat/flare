@@ -15,6 +15,7 @@ const (
 	MsgFileChunk  = "file_chunk"
 	MsgCronTick   = "cron_tick"
 	MsgCronResult = "cron_result"
+	MsgFileResume = "file_resume"
 )
 
 // Message is the wire format for all peer-to-peer communication.

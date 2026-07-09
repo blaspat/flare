@@ -75,10 +75,15 @@ func Connect(ctx context.Context, addr string, nodeName string, hub *Hub) (*Peer
 		return nil, fmt.Errorf("cannot connect to self (%s)", nodeName)
 	}
 
-	// Register with hub
+	// Register with hub (sets up disconnect handler + reconnect tracking)
 	peer := NewPeer(peerName, conn)
-	hub.peers[peerName] = peer
+	hub.AddPeer(peerName, peer, u.String())
 	slog.Info("connected to peer", "name", peerName, "addr", u.String())
+
+	// Start peer pumps
+	peer.Start(ctx, func(msg *Message) {
+		HandleMessage(hub, nodeName, peer, msg)
+	})
 
 	return peer, nil
 }
@@ -141,22 +146,13 @@ func StartListener(ctx context.Context, addr string, nodeName string, hub *Hub) 
 		conn.SetReadDeadline(time.Time{}) // clear deadline
 
 		peer := NewPeer(peerName, conn)
-
-		func() {
-			hub.mu.Lock()
-			defer hub.mu.Unlock()
-			// Remove existing connection with same name if any
-			if existing, ok := hub.peers[peerName]; ok {
-				existing.Close()
-			}
-			hub.peers[peerName] = peer
-		}()
+		hub.AddPeer(peerName, peer, "") // incoming — no address tracking for reconnect
 
 		slog.Info("peer connected (incoming)", "name", peerName, "addr", conn.RemoteAddr())
 
 		// Start the peer pumps
 		go peer.readPump(ctx, func(msg *Message) {
-			handleMessage(hub, nodeName, peer, msg)
+			HandleMessage(hub, nodeName, peer, msg)
 		})
 		go peer.writePump(ctx)
 		go peer.heartbeatLoop(ctx)
@@ -171,8 +167,16 @@ func StartListener(ctx context.Context, addr string, nodeName string, hub *Hub) 
 	return listener
 }
 
-// handleMessage routes incoming messages from peers.
-func handleMessage(hub *Hub, nodeName string, peer *PeerState, msg *Message) {
+// HandleMessage routes incoming messages from peers.
+// It first checks for registered custom handlers on the hub; if none match
+// it falls through to the built-in switch.
+func HandleMessage(hub *Hub, nodeName string, peer *PeerState, msg *Message) {
+	// Check for registered custom handler first.
+	if handler := hub.getMessageHandler(msg.Type); handler != nil {
+		handler(msg, peer)
+		return
+	}
+
 	switch msg.Type {
 	case MsgHeartbeat:
 		// heartbeat is handled implicitly by readPump updating LastHeard

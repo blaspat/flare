@@ -68,19 +68,26 @@ func (l *Listener) handleConn(w http.ResponseWriter, r *http.Request) {
 	l.onConn(conn)
 }
 
+// MessageHandler processes an incoming message from a peer.
+type MessageHandler func(msg *Message, peer *PeerState)
+
 // Hub manages all active peer connections.
 type Hub struct {
-	mu       sync.RWMutex
-	peers    map[string]*PeerState // name -> peer
-	pending  []*PeerState          // pre-handshake peers
-	onHello  func(*PeerState)      // called after successful hello handshake
+	mu              sync.RWMutex
+	peers           map[string]*PeerState // name -> peer
+	pending         []*PeerState          // pre-handshake peers
+	onHello         func(*PeerState)      // called after successful hello handshake
+	reconnectMgr    *ReconnectManager
+	typeHandlers    map[string]MessageHandler // registered per-type handlers
+	peerChangeFn    func()                     // called when peer set changes
 }
 
 // NewHub creates a new peer hub.
 func NewHub(onHello func(*PeerState)) *Hub {
 	return &Hub{
-		peers:   make(map[string]*PeerState),
-		onHello: onHello,
+		peers:        make(map[string]*PeerState),
+		onHello:      onHello,
+		typeHandlers: make(map[string]MessageHandler),
 	}
 }
 
@@ -113,14 +120,22 @@ func (h *Hub) Broadcast(data []byte) {
 }
 
 // Remove disconnects and removes a peer from the hub.
+// This is an intentional removal — no reconnect is triggered.
 func (h *Hub) Remove(name string) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if p, ok := h.peers[name]; ok {
+		p.SetOnDisconnect(nil) // suppress reconnect — intentional removal
 		p.Close()
 		delete(h.peers, name)
 		slog.Info("peer removed", "name", name)
+		if rm := h.reconnectMgr; rm != nil {
+			rm.Forget(name)
+		}
+		h.mu.Unlock()
+		h.notifyPeerChange()
+		return
 	}
+	h.mu.Unlock()
 }
 
 func (h *Hub) registerPending(peer *PeerState) {
@@ -147,9 +162,104 @@ func (h *Hub) promotePending(conn *websocket.Conn, name string) *PeerState {
 	return nil
 }
 
+// SetReconnectManager sets the reconnect manager for automatic reconnection.
+func (h *Hub) SetReconnectManager(rm *ReconnectManager) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.reconnectMgr = rm
+}
+
+// AddPeer registers a peer connection in the hub, replacing any existing
+// connection with the same name. For outgoing connections (addr != ""),
+// the peer is tracked for automatic reconnection on drop.
+// The disconnect handler is set up to remove the peer from the hub on
+// unexpected disconnection and notify the reconnect manager.
+func (h *Hub) AddPeer(name string, peer *PeerState, addr string) {
+	h.mu.Lock()
+	// Close existing connection with same name if any
+	if existing, ok := h.peers[name]; ok {
+		existing.SetOnDisconnect(nil) // suppress handler — we're replacing it
+		existing.Close()
+	}
+
+	// Set up disconnect handler
+	peer.SetOnDisconnect(func(n string) {
+		h.mu.Lock()
+		// Only remove if this exact peer is still registered
+		if current, ok := h.peers[n]; ok && current == peer {
+			delete(h.peers, n)
+			h.mu.Unlock()
+			h.notifyPeerChange()
+		} else {
+			h.mu.Unlock()
+		}
+		rm := h.reconnectMgr
+		if rm != nil {
+			rm.OnDisconnect(n)
+		}
+	})
+
+	h.peers[name] = peer
+	h.mu.Unlock()
+
+	// Notify peer change watchers
+	h.notifyPeerChange()
+
+	// Track for reconnect if this is an outgoing connection (has an address)
+	if addr != "" {
+		if rm := h.reconnectMgr; rm != nil {
+			rm.Track(name, addr)
+		}
+	}
+}
+
 // Count returns the number of connected peers.
 func (h *Hub) Count() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return len(h.peers)
+}
+
+// ListNames returns the names of all connected peers.
+func (h *Hub) ListNames() []string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	out := make([]string, 0, len(h.peers))
+	for name := range h.peers {
+		out = append(out, name)
+	}
+	return out
+}
+
+// OnPeerChange registers a callback that fires when the peer set changes
+// (a peer is added or removed).
+func (h *Hub) OnPeerChange(fn func()) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.peerChangeFn = fn
+}
+
+// notifyPeerChange fires the peer change callback, if set.
+func (h *Hub) notifyPeerChange() {
+	if h.peerChangeFn != nil {
+		h.peerChangeFn()
+	}
+}
+
+// HandleMessageType registers a handler for a specific message type.
+// When a peer receives a message of this type, the handler is called
+// instead of the default switch in handleMessage.
+func (h *Hub) HandleMessageType(msgType string, handler MessageHandler) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.typeHandlers[msgType] = handler
+}
+
+// getMessageHandler returns the registered handler for a message type, or nil.
+// Must be called with at least a read lock held, or after the hub is fully
+// initialised and never modified (single-writer pattern).
+func (h *Hub) getMessageHandler(msgType string) MessageHandler {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.typeHandlers[msgType]
 }

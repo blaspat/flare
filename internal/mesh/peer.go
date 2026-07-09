@@ -19,11 +19,12 @@ type PeerState struct {
 	LastHeard time.Time
 	LostCount int // consecutive missed heartbeats
 
-	conn   *websocket.Conn
-	mu     sync.Mutex
-	done   chan struct{}
-	seq    atomic.Uint64
-	outbox chan []byte
+	conn          *websocket.Conn
+	mu            sync.Mutex
+	done          chan struct{}
+	seq           atomic.Uint64
+	outbox        chan []byte
+	onDisconnect  atomic.Pointer[func(name string)]
 }
 
 const (
@@ -65,7 +66,19 @@ func (p *PeerState) Send(msg []byte) error {
 	}
 }
 
+// SetOnDisconnect registers a callback that fires on unexpected disconnection.
+// Pass nil to clear. The callback is called at most once.
+func (p *PeerState) SetOnDisconnect(fn func(name string)) {
+	if fn == nil {
+		p.onDisconnect.Store(nil)
+	} else {
+		p.onDisconnect.Store(&fn)
+	}
+}
+
 // Close cleanly shuts down the peer connection.
+// If a disconnect handler is set and Close is called by the read pump or
+// heartbeat loop (unexpected drop), the handler fires once.
 func (p *PeerState) Close() error {
 	select {
 	case <-p.done:
@@ -74,7 +87,13 @@ func (p *PeerState) Close() error {
 		close(p.done)
 	}
 	slog.Debug("closing peer", "name", p.Name, "addr", p.Addr)
-	return p.conn.Close()
+	err := p.conn.Close()
+
+	if pfn := p.onDisconnect.Swap(nil); pfn != nil && *pfn != nil {
+		(*pfn)(p.Name)
+	}
+
+	return err
 }
 
 // IsAlive returns true if the peer has been heard from recently.
