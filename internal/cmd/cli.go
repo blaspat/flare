@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +53,8 @@ func ParseAndRun(ctx context.Context, args []string) error {
 		return statusCmd(ctx, cfgPath, args[2:])
 	case "run":
 		return runCmd(ctx, cfgPath, args[2:])
+	case "init":
+		return initCmd(ctx, args[2:])
 	case "help", "--help", "-h":
 		return printUsage()
 	default:
@@ -70,6 +75,7 @@ func printUsage() error {
   ` + term.Green + `flare join` + term.Reset + ` <addr>        Join an existing mesh at address
   ` + term.Green + `flare status` + term.Reset + `             Show node and mesh status
   ` + term.Green + `flare run` + term.Reset + ` <job-name>     Run a cron job immediately
+  ` + term.Green + `flare init` + term.Reset + `               Generate a config file interactively
   ` + term.Green + `flare help` + term.Reset + `               Show this help
 
 ` + term.Dim + `Config: FLARE_CONFIG env or ./flare.toml` + term.Reset + `
@@ -560,4 +566,177 @@ func setLogLevel(level string, verbose bool) {
 
 func ensureDir(path string) error {
 	return os.MkdirAll(path, 0755)
+}
+
+func initCmd(ctx context.Context, args []string) error {
+	_ = ctx
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	output := fs.String("o", "flare.toml", "output path for config file")
+	_ = fs.Parse(args)
+
+	reader := bufio.NewReader(os.Stdin)
+	hostname, _ := os.Hostname()
+
+	fmt.Print(term.Cyan + term.Bold + "\n  ⚡ Flare Setup\n" + term.Reset + "\n"+
+		term.Dim+"  Press Enter to accept defaults.\n\n"+term.Reset)
+
+	// Node name
+	fmt.Printf("  Node name"+term.Dim+" [%s]"+term.Reset+": ", hostname)
+	name, _ := reader.ReadString('\n')
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = hostname
+	}
+
+	// Listen address
+	fmt.Printf("  Listen address"+term.Dim+" [:9721]"+term.Reset+": ")
+	listen, _ := reader.ReadString('\n')
+	listen = strings.TrimSpace(listen)
+	if listen == "" {
+		listen = ":9721"
+	}
+
+	// Data directory
+	homeDir, _ := os.UserHomeDir()
+	defaultData := filepath.Join(homeDir, ".flare")
+	fmt.Printf("  Data directory"+term.Dim+" [%s]"+term.Reset+": ", defaultData)
+	dataDir, _ := reader.ReadString('\n')
+	dataDir = strings.TrimSpace(dataDir)
+	if dataDir == "" {
+		dataDir = defaultData
+	}
+
+	// Peers
+	fmt.Print("  Peer addresses (comma-separated)"+term.Dim+" []"+term.Reset+": ")
+	peersInput, _ := reader.ReadString('\n')
+	peersInput = strings.TrimSpace(peersInput)
+	var peers []string
+	if peersInput != "" {
+		for _, p := range strings.Split(peersInput, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				peers = append(peers, p)
+			}
+		}
+	}
+
+	// Sync directories
+	defaultShared := filepath.Join(dataDir, "shared")
+	fmt.Printf("  Sync directories (comma-separated)"+term.Dim+" [%s]"+term.Reset+": ", defaultShared)
+	syncDirs, _ := reader.ReadString('\n')
+	syncDirs = strings.TrimSpace(syncDirs)
+	if syncDirs == "" {
+		syncDirs = defaultShared
+	}
+	var watchDirs []config.WatchDir
+	for _, d := range strings.Split(syncDirs, ",") {
+		d = strings.TrimSpace(d)
+		if d != "" {
+			watchDirs = append(watchDirs, config.WatchDir{Path: d, Tag: "default"})
+		}
+	}
+
+	// Cron jobs
+	fmt.Print("  Add a cron job? (name:schedule:command)"+term.Dim+" []"+term.Reset+": ")
+	cronInput, _ := reader.ReadString('\n')
+	cronInput = strings.TrimSpace(cronInput)
+	var cronJobs []config.CronJob
+	if cronInput != "" {
+		parts := strings.SplitN(cronInput, ":", 3)
+		if len(parts) == 3 {
+			cronJobs = append(cronJobs, config.CronJob{
+				Name:     strings.TrimSpace(parts[0]),
+				Schedule: strings.TrimSpace(parts[1]),
+				Command:  strings.TrimSpace(parts[2]),
+				Timeout:  30_000_000_000, // 30s default
+			})
+		}
+	}
+
+	// Build config
+	cfg := &config.Config{
+		Node: config.NodeConfig{
+			Name:     name,
+			Listen:   listen,
+			DataDir:  dataDir,
+			LogLevel: "info",
+		},
+		Mesh: config.MeshConfig{
+			Peers:             peers,
+			Discovery:         "static",
+			ReconnectInterval: 10_000_000_000,
+		},
+		Sync: config.SyncConfig{
+			WatchDirs:    watchDirs,
+			PollInterval: 5_000_000_000,
+			ChunkSize:    65536,
+		},
+		Cron: config.CronConfig{
+			Enabled:     true,
+			HistorySize: 100,
+			Jobs:        cronJobs,
+		},
+	}
+
+	// Write config
+	var buf strings.Builder
+	// We'll use the toml library to write, but since we don't have a marshaler,
+	// let's write it manually — cleaner output.
+	buf.WriteString("[node]\n")
+	buf.WriteString(fmt.Sprintf("name = %q\n", cfg.Node.Name))
+	buf.WriteString(fmt.Sprintf("listen = %q\n", cfg.Node.Listen))
+	buf.WriteString(fmt.Sprintf("data_dir = %q\n", cfg.Node.DataDir))
+	buf.WriteString(fmt.Sprintf("log_level = %q\n", cfg.Node.LogLevel))
+
+	buf.WriteString("\n[mesh]\n")
+	var peerList []string
+	for _, p := range cfg.Mesh.Peers {
+		peerList = append(peerList, fmt.Sprintf("%q", p))
+	}
+	buf.WriteString(fmt.Sprintf("peers = [%s]\n", strings.Join(peerList, ", ")))
+	buf.WriteString(fmt.Sprintf("discovery = %q\n", cfg.Mesh.Discovery))
+	buf.WriteString(fmt.Sprintf("reconnect_interval = %q\n", "10s"))
+
+	buf.WriteString("\n[sync]\n")
+	buf.WriteString("watch_dirs = [\n")
+	for _, wd := range cfg.Sync.WatchDirs {
+		buf.WriteString(fmt.Sprintf("  { path = %q, tag = %q },\n", wd.Path, wd.Tag))
+	}
+	buf.WriteString("]\n")
+	buf.WriteString(fmt.Sprintf("poll_interval = %q\n", "5s"))
+	buf.WriteString(fmt.Sprintf("chunk_size = %d\n", cfg.Sync.ChunkSize))
+
+	buf.WriteString("\n[cron]\n")
+	buf.WriteString(fmt.Sprintf("enabled = %v\n", cfg.Cron.Enabled))
+	buf.WriteString(fmt.Sprintf("history_size = %d\n", cfg.Cron.HistorySize))
+
+	for _, j := range cfg.Cron.Jobs {
+		buf.WriteString(fmt.Sprintf("\n[[cron.jobs]]\n"))
+		buf.WriteString(fmt.Sprintf("name = %q\n", j.Name))
+		buf.WriteString(fmt.Sprintf("schedule = %q\n", j.Schedule))
+		buf.WriteString(fmt.Sprintf("command = %q\n", j.Command))
+		buf.WriteString(fmt.Sprintf("timeout = %q\n", strconv.Itoa(int(j.Timeout.Seconds()))+"s"))
+	}
+
+	if err := os.WriteFile(*output, []byte(buf.String()), 0644); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+
+	fmt.Println("")
+	fmt.Print("  " + term.Green + "✓" + term.Reset + " Config written to " + term.Bold + *output + term.Reset)
+
+	// Create data dirs
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "\n  "+term.Yellow+"!"+term.Reset+" Could not create data dir: %v", err)
+	}
+	for _, wd := range watchDirs {
+		if err := os.MkdirAll(wd.Path, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "\n  "+term.Yellow+"!"+term.Reset+" Could not create %s: %v", wd.Path, err)
+		}
+	}
+
+	// Offer to start
+	fmt.Print("\n\n  " + term.Dim + "Run `FLARE_CONFIG=" + *output + " flare start` to start the node." + term.Reset + "\n\n")
+
+	return nil
 }

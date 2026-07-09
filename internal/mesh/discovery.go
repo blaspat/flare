@@ -87,7 +87,7 @@ func startMDNSAdvertiser(nodeName, listenAddr string) (func(), error) {
 	service, err := mdns.NewMDNSService(
 		nodeName,      // instance name
 		"_flare._tcp", // service type
-		"local",       // domain
+		"local.",      // domain (trailing dot for FQDN)
 		"",            // hostname — empty = auto-detect
 		port,          // port
 		nil,           // IPs — nil = auto-detect all
@@ -148,7 +148,7 @@ func discoverMDNSPeers(ctx context.Context, selfName string, timeout time.Durati
 
 	params := &mdns.QueryParam{
 		Service: "_flare._tcp",
-		Domain:  "local",
+		Domain:  "local.",
 		Timeout: timeout,
 		Entries: entriesCh,
 	}
