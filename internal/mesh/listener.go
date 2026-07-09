@@ -59,6 +59,11 @@ func (l *Listener) Start(ctx context.Context) error {
 }
 
 func (l *Listener) handleConn(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Error("panic in connection handler", "remote", r.RemoteAddr, "recover", rec)
+		}
+	}()
 	conn, err := l.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Warn("websocket upgrade failed", "remote", r.RemoteAddr, "err", err)

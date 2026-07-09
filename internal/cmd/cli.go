@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/blaspat/flare/internal/election"
 	"github.com/blaspat/flare/internal/mesh"
 	flaresync "github.com/blaspat/flare/internal/sync"
+	"github.com/blaspat/flare/internal/term"
 )
 
 var (
@@ -56,16 +58,21 @@ func ParseAndRun(ctx context.Context, args []string) error {
 }
 
 func printUsage() error {
-	fmt.Print(`Flare — Edge Mesh Server
+	fmt.Print(term.Cyan + term.Bold + `
+   __ _ _ __ ___ _ __ ___
+  / _' | '__/ _ \ '__/ __|
+ | (_| | | |  __/ |  \__ \
+  \__,_|_|  \___|_|  |___/
+   Edge Mesh Server` + term.Reset + term.Dim + `  v0.1.0` + term.Reset + `
 
-Usage:
-  flare start              Start the mesh node (server mode)
-  flare join <addr>        Join an existing mesh at address
-  flare status             Show node and mesh status
-  flare run <job-name>     Run a cron job immediately
-  flare help               Show this help
+` + term.Bold + `Usage:` + term.Reset + `
+  ` + term.Green + `flare start` + term.Reset + `              Start the mesh node (server mode)
+  ` + term.Green + `flare join` + term.Reset + ` <addr>        Join an existing mesh at address
+  ` + term.Green + `flare status` + term.Reset + `             Show node and mesh status
+  ` + term.Green + `flare run` + term.Reset + ` <job-name>     Run a cron job immediately
+  ` + term.Green + `flare help` + term.Reset + `               Show this help
 
-Config: FLARE_CONFIG env or ./flare.toml
+` + term.Dim + `Config: FLARE_CONFIG env or ./flare.toml` + term.Reset + `
 `)
 	return nil
 }
@@ -73,7 +80,9 @@ Config: FLARE_CONFIG env or ./flare.toml
 func startCmd(ctx context.Context, cfgPath string, args []string) error {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	verbose := fs.Bool("v", false, "verbose logging")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("parse flags: %w", err)
+	}
 
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
@@ -147,6 +156,8 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 	defer rm.Stop()
 
 	slog.Info("starting flare node", "name", cfg.Node.Name, "listen", cfg.Node.Listen)
+	// Show startup banner
+	fmt.Print(term.BannerASCII())
 
 	// Start mesh listener
 	_ = mesh.StartListener(ctx, cfg.Node.Listen, cfg.Node.Name, h)
@@ -258,7 +269,9 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 	fs := flag.NewFlagSet("join", flag.ContinueOnError)
 	verbose := fs.Bool("v", false, "verbose logging")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("parse flags: %w", err)
+	}
 
 	if fs.NArg() == 0 {
 		return fmt.Errorf("usage: flare join <ws-address>")
@@ -275,6 +288,8 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 
 	setLogLevel(cfg.Node.LogLevel, *verbose)
 	slog.Info("joining mesh", "name", cfg.Node.Name, "peer", addr)
+	// Show startup banner
+	fmt.Print(term.BannerASCII())
 
 	// Create hub and start listener
 	h := mesh.NewHub(func(p *mesh.PeerState) {})
@@ -437,8 +452,8 @@ func statusCmd(ctx context.Context, cfgPath string, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	fmt.Printf("Node:   %s\n", cfg.Node.Name)
-	fmt.Printf("Listen: %s\n", cfg.Node.Listen)
+	fmt.Printf("%s Node:   %s%s\n", term.Bold+term.Cyan, term.Reset, cfg.Node.Name)
+	fmt.Printf("  %sListen: %s%s\n", term.Bold, term.Reset, cfg.Node.Listen)
 
 	hubMu.RLock()
 	h := hub
@@ -446,16 +461,35 @@ func statusCmd(ctx context.Context, cfgPath string, args []string) error {
 
 	if h != nil {
 		peers := h.List()
-		fmt.Printf("Peers:  %d connected\n", h.Count())
+		alive := 0
 		for _, p := range peers {
-			fmt.Printf("  • %s (%s) — alive: %v\n", p.Name, p.Addr, p.IsAlive())
+			if p.IsAlive() {
+				alive++
+			}
+		}
+		healthColor := term.Green
+		if alive == 0 {
+			healthColor = term.Red
+		} else if alive < len(peers) {
+			healthColor = term.Yellow
+		}
+		fmt.Printf("  %sPeers: %s%d connected (%s", term.Bold, term.Reset, h.Count(), healthColor)
+		fmt.Printf("%d/%d alive%s)\n", alive, len(peers), term.Reset)
+		for _, p := range peers {
+			status := term.Green + "● alive" + term.Reset
+			if !p.IsAlive() {
+				status = term.Red + "○ dead" + term.Reset
+			}
+			fmt.Printf("    %s %s (%s) — %s\n", term.Bullet(), p.Name, p.Addr, status)
 		}
 	} else {
-		fmt.Printf("Peers:  %d configured (node not running)\n", len(cfg.Mesh.Peers))
+		fmt.Printf("  %sPeers: %s%d configured (node not running)\n", term.Bold, term.Reset, len(cfg.Mesh.Peers))
 	}
 
-	fmt.Printf("Sync:   %d watch dir(s)\n", len(cfg.Sync.WatchDirs))
-	fmt.Printf("Cron:   %d job(s)\n", len(cfg.Cron.Jobs))
+	watchCount := len(cfg.Sync.WatchDirs)
+	fmt.Printf("  %sSync:  %s%d watch dir(s)\n", term.Bold, term.Reset, watchCount)
+	jobCount := len(cfg.Cron.Jobs)
+	fmt.Printf("  %sCron:  %s%d job(s)\n", term.Bold, term.Reset, jobCount)
 	return nil
 }
 
@@ -464,8 +498,45 @@ func runCmd(ctx context.Context, cfgPath string, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	_ = cfg
-	return fmt.Errorf("not yet implemented")
+
+	if len(cfg.Cron.Jobs) == 0 {
+		return fmt.Errorf("no cron jobs configured in %s", cfgPath)
+	}
+
+	jobName := strings.Join(args, " ")
+	if jobName == "" {
+		fmt.Println("Available cron jobs:")
+		for _, j := range cfg.Cron.Jobs {
+			fmt.Printf("  • %s: %q (%s)\n", j.Name, j.Command, j.Schedule)
+		}
+		return fmt.Errorf("usage: flare run <job-name>")
+	}
+
+	// Find the named job and execute it once.
+	var found *config.CronJob
+	for _, j := range cfg.Cron.Jobs {
+		if j.Name == jobName {
+			found = &j
+			break
+		}
+	}
+	if found == nil {
+		return fmt.Errorf("cron job %q not found", jobName)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, found.Timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", found.Command)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("job %q timed out after %v", found.Name, found.Timeout)
+		}
+		return fmt.Errorf("job %q failed: %w\noutput: %s", found.Name, err, string(output))
+	}
+	fmt.Printf("%s\n", string(output))
+	return nil
 }
 
 func setLogLevel(level string, verbose bool) {

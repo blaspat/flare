@@ -489,7 +489,7 @@ func TestHashFile_ProducesCorrectSHA256(t *testing.T) {
 	h := sha256.Sum256([]byte(content))
 	expected := hex.EncodeToString(h[:])
 
-	tf, err := hashFile(path, nil, "test")
+	tf, err := hashFile(path, nil, "test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -509,10 +509,11 @@ func TestHashFile_EmptyFile(t *testing.T) {
 	path := filepath.Join(dir, "empty.txt")
 	writeFile(t, path, "")
 
-	tf, err := hashFile(path, nil, "test")
+	tf, err := hashFile(path, nil, "test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	// SHA-256 of empty string.
 	expected := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	if tf.Hash != expected {
@@ -520,5 +521,20 @@ func TestHashFile_EmptyFile(t *testing.T) {
 	}
 	if tf.Size != 0 {
 		t.Errorf("empty file size: want 0, got %d", tf.Size)
+	}
+}
+
+func TestHashFile_UsesCustomHashFunc(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "custom.txt")
+	writeFile(t, path, "any content")
+
+	ft := &FileTracker{hashFunc: stubHash("deadbeef")}
+	tf, err := hashFile(path, nil, "test", ft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tf.Hash != "deadbeef" {
+		t.Errorf("want deadbeef, got %s", tf.Hash)
 	}
 }

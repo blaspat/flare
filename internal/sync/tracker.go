@@ -267,7 +267,7 @@ func (ft *FileTracker) nextVersion() uint64 {
 func (ft *FileTracker) walkAll() (map[string]*TrackedFile, error) {
 	all := make(map[string]*TrackedFile)
 	for _, dir := range ft.dirs {
-		entries, err := walkDir(dir)
+		entries, err := walkDir(dir, ft)
 		if err != nil {
 			return nil, err
 		}
@@ -282,7 +282,7 @@ func (ft *FileTracker) walkAll() (map[string]*TrackedFile, error) {
 }
 
 // walkDir walks a single directory and returns its files as tracked entries.
-func walkDir(dir WatchDir) (map[string]*TrackedFile, error) {
+func walkDir(dir WatchDir, ft *FileTracker) (map[string]*TrackedFile, error) {
 	info, err := os.Stat(dir.Path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -322,7 +322,7 @@ func walkDir(dir WatchDir) (map[string]*TrackedFile, error) {
 			return fmt.Errorf("abs %q: %w", path, err)
 		}
 
-		tf, err := hashFile(absPath, info, dir.Tag)
+		tf, err := hashFile(absPath, info, dir.Tag, ft)
 		if err != nil {
 			return fmt.Errorf("hash %q: %w", absPath, err)
 		}
@@ -338,7 +338,8 @@ func walkDir(dir WatchDir) (map[string]*TrackedFile, error) {
 
 // hashFile reads the file, computes its hash, and returns a TrackedFile.
 // The Version field is left at 0 — the caller sets it.
-func hashFile(absPath string, info os.FileInfo, tag string) (*TrackedFile, error) {
+// If ft is non-nil, the configured hash function is used; otherwise SHA-256.
+func hashFile(absPath string, info os.FileInfo, tag string, ft *FileTracker) (*TrackedFile, error) {
 	if info == nil {
 		var err error
 		info, err = os.Stat(absPath)
@@ -365,11 +366,18 @@ func hashFile(absPath string, info os.FileInfo, tag string) (*TrackedFile, error
 	}
 	defer f.Close()
 
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	var hashFn HashFunc
+	if ft != nil && ft.hashFunc != nil {
+		hashFn = ft.hashFunc
+	} else {
+		hashFn = sha256Hash
+	}
+
+	h, err := hashFn(f)
+	if err != nil {
 		return nil, fmt.Errorf("hash %q: %w", absPath, err)
 	}
-	tf.Hash = hex.EncodeToString(h.Sum(nil))
+	tf.Hash = h
 	return tf, nil
 }
 

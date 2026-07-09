@@ -26,11 +26,11 @@
 - [x] Script execution with timeout ✅ — via exec.CommandContext in cron event handler, respects Job.Timeout, logs output/errors, wired into start/join CLI
 
 ## Current: Phase 5 — Integration & Polish
-- [x] End-to-end test with 2 nodes ✅ — `internal/mesh/e2e_test.go`: 3 tests covering mesh formation, message relay, and leader election between two real WS-connected nodes
-- [ ] CLI polish (colors, progress bars)
-- [ ] Error handling hardening
-- [ ] Cross-platform build script
-- [ ] README.md — install, config, usage examples, architecture overview
+- [x] End-to-end test with 2 nodes ✅
+- [x] CLI polish (colors, progress bars) ✅ — `internal/term/` package with ANSI colors, colorized help/status/banner, auto TTY detection, ProgressBar type, `NO_COLOR` support
+- [x] Error handling hardening ✅ — hashFile uses tracker's hashFunc option, Marshal errors handled in Connect/StartListener, flag parse errors checked, runCmd implemented, unused ensureDir removed, panic recovery in listener handler
+- [x] Cross-platform build script ✅ — `scripts/build.sh` builds linux/amd64 + linux/arm64 with ldflags versioning, optional UPX compression, checksums
+- [x] README.md ✅ — install, config, usage, architecture overview, project structure
 
 ## Done
 - [ ] Final handoff to Patrick (message + merge to master + push)

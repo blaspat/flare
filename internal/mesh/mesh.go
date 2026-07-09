@@ -38,7 +38,11 @@ func Connect(ctx context.Context, addr string, nodeName string, hub *Hub) (*Peer
 		Version:    "0.1.0",
 		ListenAddr: "", // we don't advertise a listen addr on outgoing connections
 	})
-	data, _ := hello.Marshal()
+	data, err := hello.Marshal()
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("marshal hello: %w", err)
+	}
 	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("send hello: %w", err)
@@ -135,7 +139,12 @@ func StartListener(ctx context.Context, addr string, nodeName string, hub *Hub) 
 			Version:    "0.1.0",
 			ListenAddr: addr,
 		})
-		respData, _ := resp.Marshal()
+		respData, err := resp.Marshal()
+		if err != nil {
+			slog.Warn("marshal hello response failed", "peer", peerName, "err", err)
+			conn.Close()
+			return
+		}
 		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		if err := conn.WriteMessage(websocket.TextMessage, respData); err != nil {
 			slog.Warn("send hello response failed", "peer", peerName, "err", err)
