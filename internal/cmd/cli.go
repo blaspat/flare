@@ -257,14 +257,14 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 		}
 		requests := sm.HandleSyncIndex(msg.From, payload)
 		if requests != nil {
-			sendRequest(h, requests, peer.Name)
+			sendMsg(h, cfg.Node.Name, peer.Name, mesh.MsgSyncRequest, requests)
 		}
 	})
 
 	// When a peer connects, send our full sync index so they can reconcile.
 	h.OnPeerConnected(func(name string) {
 		index := sm.BuildSyncIndex()
-		sendMsg(h, name, mesh.MsgSyncIndex, index)
+		sendMsg(h, cfg.Node.Name, name, mesh.MsgSyncIndex, index)
 		slog.Debug("sent sync index to peer", "peer", name, "files", len(index.Files))
 	})
 
@@ -517,14 +517,14 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 		}
 		requests := sm.HandleSyncIndex(msg.From, payload)
 		if requests != nil {
-			sendRequest(h, requests, peer.Name)
+			sendMsg(h, cfg.Node.Name, peer.Name, mesh.MsgSyncRequest, requests)
 		}
 	})
 
 	// When a peer connects, send our full sync index.
 	h.OnPeerConnected(func(name string) {
 		index := sm.BuildSyncIndex()
-		sendMsg(h, name, mesh.MsgSyncIndex, index)
+		sendMsg(h, cfg.Node.Name, name, mesh.MsgSyncIndex, index)
 		slog.Debug("sent sync index to peer", "peer", name, "files", len(index.Files))
 	})
 
@@ -881,7 +881,7 @@ func initCmd(ctx context.Context, args []string) error {
 }
 
 // sendMsg marshals a message and sends it to a specific peer.
-func sendMsg(h *mesh.Hub, peer, msgType string, payload any) {
+func sendMsg(h *mesh.Hub, from, peer, msgType string, payload any) {
 	data, err := json.Marshal(struct {
 		Type    string `json:"type"`
 		From    string `json:"from"`
@@ -889,7 +889,7 @@ func sendMsg(h *mesh.Hub, peer, msgType string, payload any) {
 		Payload any    `json:"payload,omitempty"`
 	}{
 		Type:    msgType,
-		From:    "",
+		From:    from,
 		SentAt:  time.Now().UnixNano(),
 		Payload: payload,
 	})
@@ -898,9 +898,4 @@ func sendMsg(h *mesh.Hub, peer, msgType string, payload any) {
 		return
 	}
 	_ = h.SendTo(peer, data)
-}
-
-// sendRequest marshals a SyncRequestPayload and sends it to a peer.
-func sendRequest(h *mesh.Hub, req *flaresync.SyncRequestPayload, peer string) {
-	sendMsg(h, peer, mesh.MsgSyncRequest, req)
 }
