@@ -72,6 +72,7 @@ func printUsage() error {
 
 ` + term.Bold + `Usage:` + term.Reset + `
   ` + term.Green + `flare start` + term.Reset + `              Start the mesh node (server mode)
+  ` + term.Green + `flare start -d` + term.Reset + `           Start in background (daemon)
   ` + term.Green + `flare join` + term.Reset + ` <addr>        Join an existing mesh at address
   ` + term.Green + `flare status` + term.Reset + `             Show node and mesh status
   ` + term.Green + `flare run` + term.Reset + ` <job-name>     Run a cron job immediately
@@ -86,8 +87,32 @@ func printUsage() error {
 func startCmd(ctx context.Context, cfgPath string, args []string) error {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	verbose := fs.Bool("v", false, "verbose logging")
+	daemon := fs.Bool("d", false, "run in background (daemon mode)")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("parse flags: %w", err)
+	}
+
+	if *daemon && os.Getenv("_FLARE_DAEMON") == "" {
+		// Re-exec without the -d flag, detach from terminal
+		childArgs := make([]string, 0, len(os.Args))
+		for _, a := range os.Args[1:] { // skip binary path, we pass it explicitly
+			if a != "-d" && a != "--daemon" {
+				childArgs = append(childArgs, a)
+			}
+		}
+		proc, err := os.StartProcess(os.Args[0], append([]string{os.Args[0]}, childArgs...), &os.ProcAttr{
+			Env:   append(os.Environ(), "_FLARE_DAEMON=1"),
+			Files: []*os.File{nil, nil, nil}, // detach stdin/stdout/stderr
+		})
+		if err != nil {
+			return fmt.Errorf("daemonize: %w", err)
+		}
+		pid := proc.Pid
+		if err := proc.Release(); err != nil {
+			return fmt.Errorf("release: %w", err)
+		}
+		fmt.Printf("Flare started in background (PID %d)\n", pid)
+		return nil
 	}
 
 	cfg, err := config.Load(cfgPath)
@@ -275,8 +300,31 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 	fs := flag.NewFlagSet("join", flag.ContinueOnError)
 	verbose := fs.Bool("v", false, "verbose logging")
+	daemon := fs.Bool("d", false, "run in background (daemon mode)")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("parse flags: %w", err)
+	}
+
+	if *daemon && os.Getenv("_FLARE_DAEMON") == "" {
+		childArgs := make([]string, 0, len(os.Args))
+		for _, a := range os.Args[1:] {
+			if a != "-d" && a != "--daemon" {
+				childArgs = append(childArgs, a)
+			}
+		}
+		proc, err := os.StartProcess(os.Args[0], append([]string{os.Args[0]}, childArgs...), &os.ProcAttr{
+			Env:   append(os.Environ(), "_FLARE_DAEMON=1"),
+			Files: []*os.File{nil, nil, nil},
+		})
+		if err != nil {
+			return fmt.Errorf("daemonize: %w", err)
+		}
+		pid := proc.Pid
+		if err := proc.Release(); err != nil {
+			return fmt.Errorf("release: %w", err)
+		}
+		fmt.Printf("Flare started in background (PID %d)\n", pid)
+		return nil
 	}
 
 	if fs.NArg() == 0 {
