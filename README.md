@@ -1,5 +1,9 @@
 # Flare — Edge Mesh Server
 
+<p align="center">
+  <img src="assets/logo.svg" width="200" height="200" alt="Flare logo">
+</p>
+
 [![Go](https://img.shields.io/badge/Go-1.26-blue)](https://go.dev)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
