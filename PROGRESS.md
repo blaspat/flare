@@ -33,4 +33,4 @@
 - [x] README.md ✅ — install, config, usage, architecture overview, project structure
 
 ## Done
-- [ ] Final handoff to Patrick (message + merge to master + push)
+- [x] Final handoff to Patrick ✅ — pushed to origin, cron cancelled. README at https://github.com/blaspat/flare
