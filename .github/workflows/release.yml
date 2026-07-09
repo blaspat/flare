@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Build matrix
+        run: |
+          mkdir -p dist
+          VERSION="${GITHUB_REF_NAME#v}"
+          LDFLAGS="-w -s -X main.version=${VERSION}"
+
+          for platform in "linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64"; do
+            GOOS="${platform%%/*}"
+            GOARCH="${platform##*/}"
+            binary="flare_${VERSION}_${GOOS}_${GOARCH}"
+
+            echo "Building $GOOS/$GOARCH → $binary"
+            GOOS="$GOOS" GOARCH="$GOARCH" CGO_ENABLED=0 \
+              go build -trimpath -ldflags "${LDFLAGS}" -o "dist/$binary" .
+
+            # Compress with UPX on linux builds only
+            if [ "$GOOS" = "linux" ] && command -v upx &>/dev/null; then
+              upx --quiet --best "dist/$binary" 2>/dev/null || true
+            fi
+          done
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum flare_* > checksums.txt
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
