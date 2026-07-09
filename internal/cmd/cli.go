@@ -257,7 +257,7 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 		}
 		requests := sm.HandleSyncIndex(msg.From, payload)
 		if requests != nil {
-			sendRequest(h, requests, msg.From)
+			sendRequest(h, requests, peer.Name)
 		}
 	})
 
@@ -517,7 +517,7 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 		}
 		requests := sm.HandleSyncIndex(msg.From, payload)
 		if requests != nil {
-			sendRequest(h, requests, msg.From)
+			sendRequest(h, requests, peer.Name)
 		}
 	})
 
