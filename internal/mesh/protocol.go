@@ -8,14 +8,16 @@ import (
 
 // Message types
 const (
-	MsgHello    = "hello"
-	MsgHeartbeat = "heartbeat"
-	MsgPong     = "pong"
+	MsgHello      = "hello"
+	MsgHeartbeat  = "heartbeat"
+	MsgPong       = "pong"
 	MsgFileChange = "file_change"
 	MsgFileChunk  = "file_chunk"
 	MsgCronTick   = "cron_tick"
 	MsgCronResult = "cron_result"
 	MsgFileResume = "file_resume"
+	MsgSyncIndex  = "sync_index"
+	MsgSyncRequest = "sync_request"
 )
 
 // Message is the wire format for all peer-to-peer communication.
@@ -46,8 +48,8 @@ func NewMessage(msgType, from string, payload any) (*Message, error) {
 		if err != nil {
 			return nil, fmt.Errorf("marshal payload: %w", err)
 		}
-		raw = raw[:0]
-		raw = b
+		raw = make(json.RawMessage, len(b))
+		copy(raw, b)
 	}
 	return &Message{
 		Type:    msgType,

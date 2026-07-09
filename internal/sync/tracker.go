@@ -6,6 +6,7 @@ package sync
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -248,6 +249,32 @@ func (ft *FileTracker) Get(absPath string) *TrackedFile {
 	return &c
 }
 
+// GetByTagAndPath looks up a tracked file by its tag and relative path.
+// Returns nil if not found.
+func (ft *FileTracker) GetByTagAndPath(tag, relPath string) *TrackedFile {
+	ft.mu.RLock()
+	defer ft.mu.RUnlock()
+
+	// Find the base directory for this tag.
+	var baseDir string
+	for _, d := range ft.dirs {
+		if d.Tag == tag {
+			baseDir = d.Path
+			break
+		}
+	}
+	if baseDir == "" {
+		return nil
+	}
+	absPath := filepath.Join(baseDir, relPath)
+	tf, ok := ft.files[absPath]
+	if !ok {
+		return nil
+	}
+	c := *tf
+	return &c
+}
+
 // Reset clears all tracked state. The next scan will report every file as
 // created.
 func (ft *FileTracker) Reset() {
@@ -255,6 +282,64 @@ func (ft *FileTracker) Reset() {
 	defer ft.mu.Unlock()
 	ft.files = make(map[string]*TrackedFile)
 	ft.version = 0
+}
+
+// Save persists the current tracker state to a JSON file.
+// The state includes all tracked files (including tombstones) so that
+// offline deletions can be detected on restart.
+func (ft *FileTracker) Save(path string) error {
+	ft.mu.RLock()
+	snap := make(map[string]TrackedFile)
+	for k, v := range ft.files {
+		snap[k] = *v
+	}
+	ver := ft.version
+	ft.mu.RUnlock()
+
+	data, err := json.Marshal(struct {
+		Version uint64                  `json:"version"`
+		Files   map[string]TrackedFile `json:"files"`
+	}{Version: ver, Files: snap})
+	if err != nil {
+		return fmt.Errorf("marshal tracker state: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("create state dir: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("write tracker state: %w", err)
+	}
+	return nil
+}
+
+// Load restores tracker state from a JSON file previously written by Save.
+// It does NOT walk the watch directories — call Scan() afterwards to detect
+// offline changes.
+func (ft *FileTracker) Load(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // first run — no state to load
+		}
+		return fmt.Errorf("read tracker state: %w", err)
+	}
+	var loaded struct {
+		Version uint64                  `json:"version"`
+		Files   map[string]TrackedFile `json:"files"`
+	}
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		return fmt.Errorf("unmarshal tracker state: %w", err)
+	}
+
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	ft.version = loaded.Version
+	ft.files = make(map[string]*TrackedFile, len(loaded.Files))
+	for k, v := range loaded.Files {
+		v := v
+		ft.files[k] = &v
+	}
+	return nil
 }
 
 // nextVersion bumps and returns the global version counter.

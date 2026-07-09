@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -85,6 +86,7 @@ type Hub struct {
 	reconnectMgr    *ReconnectManager
 	typeHandlers    map[string]MessageHandler // registered per-type handlers
 	peerChangeFn    func()                     // called when peer set changes
+	peerConnectedFn func(name string)          // called when a peer is added
 }
 
 // NewHub creates a new peer hub.
@@ -122,6 +124,18 @@ func (h *Hub) Broadcast(data []byte) {
 	for _, p := range h.peers {
 		_ = p.Send(data)
 	}
+}
+
+// SendTo sends a message to a specific peer by name.
+// Returns an error if the peer is not found.
+func (h *Hub) SendTo(name string, data []byte) error {
+	h.mu.RLock()
+	p, ok := h.peers[name]
+	h.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("peer %q not connected", name)
+	}
+	return p.Send(data)
 }
 
 // Remove disconnects and removes a peer from the hub.
@@ -210,6 +224,11 @@ func (h *Hub) AddPeer(name string, peer *PeerState, addr string) {
 	// Notify peer change watchers
 	h.notifyPeerChange()
 
+	// Notify peer-connected callback (for sync index exchange, etc.)
+	if fn := h.peerConnectedFn; fn != nil {
+		fn(name)
+	}
+
 	// Track for reconnect if this is an outgoing connection (has an address)
 	if addr != "" {
 		if rm := h.reconnectMgr; rm != nil {
@@ -249,6 +268,14 @@ func (h *Hub) notifyPeerChange() {
 	if h.peerChangeFn != nil {
 		h.peerChangeFn()
 	}
+}
+
+// OnPeerConnected registers a callback that fires when a peer is
+// successfully added. The callback receives the peer's name.
+func (h *Hub) OnPeerConnected(fn func(name string)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.peerConnectedFn = fn
 }
 
 // HandleMessageType registers a handler for a specific message type.

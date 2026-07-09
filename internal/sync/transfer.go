@@ -54,7 +54,33 @@ type FileResumeRequest struct {
 	MissingIndices []int  `json:"missing_indices"`
 }
 
-// --- FileChunk -------------------------------------------------------------
+// SyncIndexEntry describes one file in a node's sync index.
+type SyncIndexEntry struct {
+	Path    string `json:"path"`     // relative path within the watch tag
+	Tag     string `json:"tag"`      // watch-dir tag
+	Size    int64  `json:"size"`     // -1 if deleted
+	Hash    string `json:"hash"`     // empty if deleted
+	Version uint64 `json:"version"`  // tracker version (global monotonic)
+	ModTime int64  `json:"mod_time"` // unix-nano (0 if deleted)
+}
+
+// SyncIndexPayload is exchanged when a new peer connects.
+// It carries the sender's full file index so the receiver can reconcile.
+type SyncIndexPayload struct {
+	Files []SyncIndexEntry `json:"files"`
+}
+
+// SyncRequestPayload is sent when a node determines it needs a file
+// from a peer after reconciling sync indexes.
+type SyncRequestPayload struct {
+	Files []SyncRequestEntry `json:"files"`
+}
+
+// SyncRequestEntry identifies a single file being requested.
+type SyncRequestEntry struct {
+	Path string `json:"path"`
+	Tag  string `json:"tag"`
+}
 
 // FileChunk is the internal representation of a single file chunk.
 type FileChunk struct {
@@ -637,4 +663,99 @@ func (tm *TransferManager) relativePath(absPath, tag string) string {
 		}
 	}
 	return filepath.Base(absPath)
+}
+
+// BuildSyncIndex builds the full file index from the tracker's current state.
+// Non-deleted files carry their hash/size/modtime; deleted files have Size=-1.
+func (tm *TransferManager) BuildSyncIndex() *SyncIndexPayload {
+	snap := tm.tracker.Snapshot()
+	entries := make([]SyncIndexEntry, 0, len(snap))
+	for _, tf := range snap {
+		entry := SyncIndexEntry{
+			Path:    tm.relativePath(tf.Path, tf.Tag),
+			Tag:     tf.Tag,
+			Version: tf.Version,
+		}
+		if tf.Deleted {
+			entry.Size = -1
+		} else {
+			entry.Size = tf.Size
+			entry.Hash = tf.Hash
+			entry.ModTime = tf.ModTime.UnixNano()
+		}
+		entries = append(entries, entry)
+	}
+	return &SyncIndexPayload{Files: entries}
+}
+
+// HandleSyncIndex reconciles a peer's file index against our local state.
+// It returns a SyncRequestPayload listing files we need to fetch from the peer.
+func (tm *TransferManager) HandleSyncIndex(from string, index *SyncIndexPayload) *SyncRequestPayload {
+	var requests []SyncRequestEntry
+
+	for _, entry := range index.Files {
+		if from == tm.nodeID {
+			continue // skip self
+		}
+
+		local := tm.tracker.GetByTagAndPath(entry.Tag, entry.Path)
+		destPath := tm.resolveDestPath(entry.Tag, entry.Path)
+
+		if entry.Size == -1 {
+			// Peer has this file as deleted.
+			if local != nil && !local.Deleted {
+				// We still have it — delete ours.
+				if err := os.Remove(destPath); err != nil && !os.IsNotExist(err) {
+					slog.Warn("sync-index: remove file deleted by peer",
+						"path", entry.Path, "tag", entry.Tag, "err", err)
+				}
+				slog.Info("sync-index: deleted file (peer had tombstone)",
+					"path", entry.Path, "from", from)
+			}
+			continue
+		}
+
+		// Peer has a live file.
+		if local == nil || local.Deleted {
+			// We don't have it — request it.
+			requests = append(requests, SyncRequestEntry{Path: entry.Path, Tag: entry.Tag})
+			continue
+		}
+
+		// Both have the file. Take the newer version (tie-break by modtime).
+		if entry.Version > local.Version || (entry.Version == local.Version && entry.ModTime > local.ModTime.UnixNano()) {
+			// Peer has a newer version (or same version but newer mtime).
+			// Only request if the content differs.
+			if entry.Hash != local.Hash {
+				requests = append(requests, SyncRequestEntry{Path: entry.Path, Tag: entry.Tag})
+			}
+		}
+	}
+
+	if len(requests) == 0 {
+		return nil
+	}
+	return &SyncRequestPayload{Files: requests}
+}
+
+// HandleSyncRequest processes a file request from a peer.
+// For each requested file, it reads the file from disk and sends it.
+func (tm *TransferManager) HandleSyncRequest(from string, req *SyncRequestPayload) {
+	for _, f := range req.Files {
+		absPath := tm.resolveDestPath(f.Tag, f.Path)
+		if absPath == "" {
+			slog.Warn("sync-request: unknown tag", "tag", f.Tag, "path", f.Path)
+			continue
+		}
+		tf := tm.tracker.GetByTagAndPath(f.Tag, f.Path)
+		if tf == nil || tf.Deleted {
+			slog.Debug("sync-request: file not tracked locally", "path", f.Path)
+			continue
+		}
+		if err := tm.sendFile(tf); err != nil {
+			slog.Warn("sync-request: send file failed", "path", f.Path, "err", err)
+		} else {
+			slog.Info("sync-request: sent file to peer", "path", f.Path, "to", from)
+		}
+	}
 }

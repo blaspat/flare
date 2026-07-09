@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -190,9 +191,6 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 	// Show startup banner
 	fmt.Print(term.BannerASCII())
 
-	// Start mesh listener
-	_ = mesh.StartListener(ctx, cfg.Node.Listen, cfg.Node.Name, h)
-
 	// Build watch directories for file sync.
 	watchDirs := make([]flaresync.WatchDir, len(cfg.Sync.WatchDirs))
 	for i, wd := range cfg.Sync.WatchDirs {
@@ -243,6 +241,43 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 		}
 		sm.HandleFileResume(msg.From, payload)
 	})
+	h.HandleMessageType(mesh.MsgSyncRequest, func(msg *mesh.Message, peer *mesh.PeerState) {
+		payload, err := mesh.DecodePayload[flaresync.SyncRequestPayload](msg)
+		if err != nil {
+			slog.Warn("decode sync_request payload", "from", msg.From, "err", err)
+			return
+		}
+		sm.HandleSyncRequest(msg.From, payload)
+	})
+	h.HandleMessageType(mesh.MsgSyncIndex, func(msg *mesh.Message, peer *mesh.PeerState) {
+		payload, err := mesh.DecodePayload[flaresync.SyncIndexPayload](msg)
+		if err != nil {
+			slog.Warn("decode sync_index payload", "from", msg.From, "err", err)
+			return
+		}
+		requests := sm.HandleSyncIndex(msg.From, payload)
+		if requests != nil {
+			sendRequest(h, requests, msg.From)
+		}
+	})
+
+	// When a peer connects, send our full sync index so they can reconcile.
+	h.OnPeerConnected(func(name string) {
+		index := sm.BuildSyncIndex()
+		sendMsg(h, name, mesh.MsgSyncIndex, index)
+		slog.Debug("sent sync index to peer", "peer", name, "files", len(index.Files))
+	})
+
+	// Sync state file path (persisted in data dir).
+	syncStatePath := filepath.Join(cfg.Node.DataDir, "sync_state.json")
+
+	// Load persisted tracker state so offline deletions/new files are detected.
+	if err := tracker.Load(syncStatePath); err != nil {
+		slog.Warn("load tracker state", "err", err)
+	}
+
+	// Start mesh listener
+	_ = mesh.StartListener(ctx, cfg.Node.Listen, cfg.Node.Name, h)
 
 	// Start sync polling loop.
 	pollInterval := cfg.Sync.PollInterval
@@ -253,9 +288,13 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 		pollTicker := time.NewTicker(pollInterval)
 		defer pollTicker.Stop()
 
-		// Initial poll immediately.
+		// Initial poll immediately (detects offline changes from loaded state).
 		if err := sm.Poll(); err != nil {
 			slog.Warn("initial sync poll", "err", err)
+		}
+		// Save tracker state after initial poll.
+		if err := tracker.Save(syncStatePath); err != nil {
+			slog.Warn("save tracker state", "err", err)
 		}
 
 		// Stale transfer cleanup loop (every 30s).
@@ -265,10 +304,18 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 		for {
 			select {
 			case <-ctx.Done():
+				// Final save on shutdown.
+				if err := tracker.Save(syncStatePath); err != nil {
+					slog.Warn("save tracker state on shutdown", "err", err)
+				}
 				return
 			case <-pollTicker.C:
 				if err := sm.Poll(); err != nil {
 					slog.Warn("sync poll", "err", err)
+				}
+				// Save state after each poll to persist tombstones.
+				if err := tracker.Save(syncStatePath); err != nil {
+					slog.Warn("save tracker state", "err", err)
 				}
 			case <-cleanupTicker.C:
 				cleaned := sm.CleanStaleTransfers(5 * time.Minute)
@@ -406,8 +453,6 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 	h.SetReconnectManager(rm)
 	defer rm.Stop()
 
-	_ = mesh.StartListener(ctx, cfg.Node.Listen, cfg.Node.Name, h)
-
 	// Build watch directories for file sync.
 	watchDirs := make([]flaresync.WatchDir, len(cfg.Sync.WatchDirs))
 	for i, wd := range cfg.Sync.WatchDirs {
@@ -456,6 +501,42 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 		}
 		sm.HandleFileResume(msg.From, payload)
 	})
+	h.HandleMessageType(mesh.MsgSyncRequest, func(msg *mesh.Message, peer *mesh.PeerState) {
+		payload, err := mesh.DecodePayload[flaresync.SyncRequestPayload](msg)
+		if err != nil {
+			slog.Warn("decode sync_request payload", "from", msg.From, "err", err)
+			return
+		}
+		sm.HandleSyncRequest(msg.From, payload)
+	})
+	h.HandleMessageType(mesh.MsgSyncIndex, func(msg *mesh.Message, peer *mesh.PeerState) {
+		payload, err := mesh.DecodePayload[flaresync.SyncIndexPayload](msg)
+		if err != nil {
+			slog.Warn("decode sync_index payload", "from", msg.From, "err", err)
+			return
+		}
+		requests := sm.HandleSyncIndex(msg.From, payload)
+		if requests != nil {
+			sendRequest(h, requests, msg.From)
+		}
+	})
+
+	// When a peer connects, send our full sync index.
+	h.OnPeerConnected(func(name string) {
+		index := sm.BuildSyncIndex()
+		sendMsg(h, name, mesh.MsgSyncIndex, index)
+		slog.Debug("sent sync index to peer", "peer", name, "files", len(index.Files))
+	})
+
+	// Sync state file path.
+	syncStatePath := filepath.Join(cfg.Node.DataDir, "sync_state.json")
+
+	// Load persisted tracker state.
+	if err := tracker.Load(syncStatePath); err != nil {
+		slog.Warn("load tracker state", "err", err)
+	}
+
+	_ = mesh.StartListener(ctx, cfg.Node.Listen, cfg.Node.Name, h)
 
 	// Start sync polling loop.
 	pollInterval := cfg.Sync.PollInterval
@@ -466,8 +547,12 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 		pollTicker := time.NewTicker(pollInterval)
 		defer pollTicker.Stop()
 
+		// Initial poll immediately (detects offline changes from loaded state).
 		if err := sm.Poll(); err != nil {
 			slog.Warn("initial sync poll", "err", err)
+		}
+		if err := tracker.Save(syncStatePath); err != nil {
+			slog.Warn("save tracker state", "err", err)
 		}
 
 		cleanupTicker := time.NewTicker(30 * time.Second)
@@ -476,10 +561,16 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 		for {
 			select {
 			case <-ctx.Done():
+				if err := tracker.Save(syncStatePath); err != nil {
+					slog.Warn("save tracker state on shutdown", "err", err)
+				}
 				return
 			case <-pollTicker.C:
 				if err := sm.Poll(); err != nil {
 					slog.Warn("sync poll", "err", err)
+				}
+				if err := tracker.Save(syncStatePath); err != nil {
+					slog.Warn("save tracker state", "err", err)
 				}
 			case <-cleanupTicker.C:
 				cleaned := sm.CleanStaleTransfers(5 * time.Minute)
@@ -787,4 +878,29 @@ func initCmd(ctx context.Context, args []string) error {
 	fmt.Print("\n\n  " + term.Dim + "Run `FLARE_CONFIG=" + *output + " flare start` to start the node." + term.Reset + "\n\n")
 
 	return nil
+}
+
+// sendMsg marshals a message and sends it to a specific peer.
+func sendMsg(h *mesh.Hub, peer, msgType string, payload any) {
+	data, err := json.Marshal(struct {
+		Type    string `json:"type"`
+		From    string `json:"from"`
+		SentAt  int64  `json:"sent_at"`
+		Payload any    `json:"payload,omitempty"`
+	}{
+		Type:    msgType,
+		From:    "",
+		SentAt:  time.Now().UnixNano(),
+		Payload: payload,
+	})
+	if err != nil {
+		slog.Warn("marshal message", "type", msgType, "err", err)
+		return
+	}
+	_ = h.SendTo(peer, data)
+}
+
+// sendRequest marshals a SyncRequestPayload and sends it to a peer.
+func sendRequest(h *mesh.Hub, req *flaresync.SyncRequestPayload, peer string) {
+	sendMsg(h, peer, mesh.MsgSyncRequest, req)
 }
