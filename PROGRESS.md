@@ -19,17 +19,18 @@
 - [x] File transfer (chunked, resume) ✅ — `internal/sync/transfer.go`: ChunkFile splits files into configurable-size chunks (base64 over WebSocket), TransferManager handles send/receive with out-of-order chunk assembly, IncomingTransferStore tracks partial transfers, resume via missing-chunk re-request (FileResumeRequest), hash verification before apply, stale transfer cleanup, 17 tests
 - [x] Apply incoming changes ✅ — TransferManager.HandleFileChange/HandleFileChunk/finalizeTransfer writes assembled files to correct watch-dir paths, verifies full-file SHA-256, handles file deletion announcements (Size=-1), registered via Hub.HandleMessageType for msgFileChange/msgFileChunk/msgFileResume
 
-## Current: Phase 4 — Distributed Cron ✅
+## Phase 4: Distributed Cron ✅
 - [x] In-memory scheduler ✅ — `internal/cron/` package
 - [x] Leader election (simplest-first) ✅ — `internal/election/` package: Elector type with lowest-name algorithm, Hub integration (OnPeerChange/ListNames/notifyPeerChange), wired into start/join CLI, 14 tests
 - [x] Job handoff on node drop ✅ — `internal/cron/manager.go`: CronManager wraps Scheduler, starts/stops on leadership transitions via OnLeadershipChange, jobs handed off to new leader when current leader drops, 12 tests
 - [x] Script execution with timeout ✅ — via exec.CommandContext in cron event handler, respects Job.Timeout, logs output/errors, wired into start/join CLI
 
-## Phase 5: Integration & Polish
-- [ ] End-to-end test with 2 nodes
+## Current: Phase 5 — Integration & Polish
+- [x] End-to-end test with 2 nodes ✅ — `internal/mesh/e2e_test.go`: 3 tests covering mesh formation, message relay, and leader election between two real WS-connected nodes
 - [ ] CLI polish (colors, progress bars)
 - [ ] Error handling hardening
 - [ ] Cross-platform build script
+- [ ] README.md — install, config, usage examples, architecture overview
 
 ## Done
-- [ ] Final handoff to Patrick
+- [ ] Final handoff to Patrick (message + merge to master + push)
