@@ -79,6 +79,10 @@ func Connect(ctx context.Context, addr string, nodeName string, hub *Hub) (*Peer
 		return nil, fmt.Errorf("cannot connect to self (%s)", nodeName)
 	}
 
+	// Clear deadlines — they must not leak into the peer pumps
+	conn.SetReadDeadline(time.Time{})
+	conn.SetWriteDeadline(time.Time{})
+
 	// Register with hub (sets up disconnect handler + reconnect tracking)
 	peer := NewPeer(peerName, conn)
 	hub.AddPeer(peerName, peer, u.String())
@@ -153,6 +157,7 @@ func StartListener(ctx context.Context, addr string, nodeName string, hub *Hub) 
 		}
 
 		conn.SetReadDeadline(time.Time{}) // clear deadline
+		conn.SetWriteDeadline(time.Time{})
 
 		peer := NewPeer(peerName, conn)
 		hub.AddPeer(peerName, peer, "") // incoming — no address tracking for reconnect
