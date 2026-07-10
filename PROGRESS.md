@@ -84,3 +84,24 @@
 - [x] Last-writer-wins for concurrent file edits
 - [x] Version vector reconciliation
 - [x] Merge conflict reporting
+
+---
+
+## Phase 7: Web Dashboard
+
+### P1 — Dashboard Backend
+- [ ] `internal/web/server.go` — HTTP server, routes, embed.FS for static assets
+- [ ] `internal/web/api.go` — REST endpoints (status, peers, sync, cron)
+- [ ] `internal/web/ws.go` — WebSocket event push to browser clients
+- [ ] Wire into `main.go` + config (web_port)
+
+### P2 — Dashboard Frontend
+- [ ] `index.html` — dashboard layout with cards, tables, event log
+- [ ] `app.js` — WebSocket client, real-time updates, UI rendering
+- [ ] `style.css` — clean dark theme, responsive layout
+
+### P3 — Polish
+- [ ] Loading/error/empty states
+- [ ] Auto-reconnect WebSocket on disconnect
+- [ ] Sort/filter peers table
+- [ ] CLI `flare dashboard` command to open browser
