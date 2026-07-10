@@ -34,7 +34,7 @@
 
 ## Phase 6: Quality-of-Life Features
 
-### P1 — Conflict Handling ✅
+### P1 — Conflict Handling ✅ (2026-07-10)
 - [x] Rename conflicting files instead of silent overwrite
 - [x] `.conflict.<node>.<timestamp>` suffix on conflicts
 - [x] Report conflicts in CLI status
@@ -44,12 +44,42 @@
 - [ ] Fall back to polling when not available
 - [ ] Integration with FileTracker.Scan
 
-### P3 — Content-Defined Chunking
-- [ ] Rabin fingerprint / gear hash chunker
-- [ ] Delta sync (only transfer changed blocks)
-- [ ] Backward-compatible with current whole-file protocol
+### P3 — Peer Discovery Backoff
+- [ ] Exponential backoff + jitter on reconnect
+- [ ] Configurable min/max delay
+- [ ] Circuit breaker after N consecutive failures
 
-### P3 — Direct TLS
+### P4 — Bandwidth Throttling
+- [ ] Token bucket rate limiter for transfers
+- [ ] Configurable bytes-per-second limit
+- [ ] Per-peer throttle configuration
+
+### P4 — Direct TLS
 - [ ] `tls_cert` / `tls_key` config options
 - [ ] Wrap WebSocket listener with crypto/tls
 - [ ] Graceful fallback to plain WS
+
+### P4 — Content-Defined Chunking
+- [ ] Gear hash / Rabin fingerprint chunker
+- [ ] Delta sync (only transfer changed blocks)
+- [ ] Backward-compatible with current whole-file protocol
+
+### P4 — Encryption at Rest
+- [ ] AES-GCM encrypt synced files on disk
+- [ ] Key management via config/env
+- [ ] Transparent decrypt on read
+
+### P5 — NAT Traversal
+- [ ] STUN client for public address discovery
+- [ ] TURN relay fallback
+- [ ] ICE-style connection negotiation
+
+### P5 — Distributed Cron HA
+- [ ] Cron job history / audit log
+- [ ] Missed-job catch-up on leader election
+- [ ] Configurable job retry policy
+
+### P5 — CRDT-Style Merge
+- [ ] Last-writer-wins for concurrent file edits
+- [ ] Version vector reconciliation
+- [ ] Merge conflict reporting
