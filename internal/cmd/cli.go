@@ -222,6 +222,17 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 	tr = sm
 	trMu.Unlock()
 
+	// Create event-driven file watcher for near-instant change detection.
+	// Falls back to polling when fsnotify is unavailable (NFS, FUSE, etc.).
+	pollInterval := cfg.Sync.PollInterval
+	if pollInterval <= 0 {
+		pollInterval = 5 * time.Second
+	}
+	watcher := flaresync.NewDirWatcher(watchDirs, pollInterval)
+	watcher.Start()
+	defer watcher.Stop()
+	slog.Info("file watcher initialized", "mechanism", watcher.Status())
+
 	// Register sync message handlers with the hub.
 	h.HandleMessageType(mesh.MsgFileChange, func(msg *mesh.Message, peer *mesh.PeerState) {
 		payload, err := mesh.DecodePayload[flaresync.FileChangeAnnounce](msg)
@@ -285,15 +296,9 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 	// Start mesh listener
 	_ = mesh.StartListener(ctx, cfg.Node.Listen, cfg.Node.Name, h)
 
-	// Start sync polling loop.
-	pollInterval := cfg.Sync.PollInterval
-	if pollInterval <= 0 {
-		pollInterval = 5 * time.Second
-	}
+	// Start sync polling loop — triggered by event-driven watcher,
+	// with initial poll on startup.
 	go func() {
-		pollTicker := time.NewTicker(pollInterval)
-		defer pollTicker.Stop()
-
 		// Initial poll immediately (detects offline changes from loaded state).
 		if err := sm.Poll(); err != nil {
 			slog.Warn("initial sync poll", "err", err)
@@ -315,7 +320,7 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 					slog.Warn("save tracker state on shutdown", "err", err)
 				}
 				return
-			case <-pollTicker.C:
+			case <-watcher.C():
 				if err := sm.Poll(); err != nil {
 					slog.Warn("sync poll", "err", err)
 				}

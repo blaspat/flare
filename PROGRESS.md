@@ -39,10 +39,10 @@
 - [x] `.conflict.<node>.<timestamp>` suffix on conflicts
 - [x] Report conflicts in CLI status
 
-### P2 — Event-Driven File Watcher
-- [ ] inotify on Linux, kqueue on macOS
-- [ ] Fall back to polling when not available
-- [ ] Integration with FileTracker.Scan
+### P2 — Event-Driven File Watcher ✅ (2026-07-10)
+- [x] inotify on Linux, kqueue on macOS
+- [x] Fall back to polling when not available
+- [x] Integration with FileTracker.Scan (via DirWatcher → TransferManager.Poll)
 
 ### P3 — Peer Discovery Backoff
 - [ ] Exponential backoff + jitter on reconnect
