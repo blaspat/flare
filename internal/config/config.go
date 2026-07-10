@@ -22,6 +22,7 @@ type NodeConfig struct {
 	Listen         string `toml:"listen"`
 	DataDir        string `toml:"data_dir"`
 	LogLevel       string `toml:"log_level"`
+	WebPort        int    `toml:"web_port"`  // dashboard HTTP server port (0 = disabled)
 	TLSCert        string `toml:"tls_cert"`
 	TLSKey         string `toml:"tls_key"`
 	EncryptionKey  string `toml:"encryption_key"`  // hex-encoded 32-byte AES-256 key (empty = disabled)

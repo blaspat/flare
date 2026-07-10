@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flare Dashboard</title>
+<style>
+  *, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --dim: #8b949e;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --blue: #58a6ff;
+    --accent: #2dba4e;
+    --radius: 8px;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 20px;
+    min-height: 100vh;
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+  .header h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+  }
+  .header .sub {
+    color: var(--dim);
+    font-size: 0.85rem;
+  }
+  .conn-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    padding: 3px 10px;
+    border-radius: 12px;
+    background: var(--card);
+    border: 1px solid var(--border);
+  }
+  .conn-badge .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .dot.green { background: var(--green); }
+  .dot.red { background: var(--red); }
+  .dot.yellow { background: var(--yellow); }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+  }
+  .card h2 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--dim);
+    margin-bottom: 12px;
+  }
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    font-size: 0.9rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-row .label { color: var(--dim); }
+  .stat-row .value { font-weight: 500; }
+  .badge {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .badge.green { background: rgba(63,185,80,0.15); color: var(--green); }
+  .badge.red { background: rgba(248,81,73,0.15); color: var(--red); }
+  .badge.yellow { background: rgba(210,153,34,0.15); color: var(--yellow); }
+  .badge.blue { background: rgba(88,166,255,0.15); color: var(--blue); }
+  .badge.dim { background: rgba(139,148,158,0.15); color: var(--dim); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+  thead th {
+    text-align: left;
+    padding: 6px 8px;
+    color: var(--dim);
+    font-weight: 500;
+    border-bottom: 1px solid var(--border);
+  }
+  tbody td {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .empty {
+    text-align: center;
+    color: var(--dim);
+    padding: 24px;
+    font-size: 0.85rem;
+  }
+  .event-log {
+    max-height: 300px;
+    overflow-y: auto;
+  }
+  .event-log .entry {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.8rem;
+    display: flex;
+    gap: 8px;
+  }
+  .event-log .entry .ts {
+    color: var(--dim);
+    flex-shrink: 0;
+    font-family: monospace;
+  }
+  .event-log .entry .msg { word-break: break-word; }
+  .loading {
+    text-align: center;
+    padding: 40px;
+    color: var(--dim);
+  }
+  @media (max-width: 600px) {
+    body { padding: 12px; }
+    .grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>⚡ Flare</h1>
+  <span class="sub" id="nodeName">—</span>
+  <span class="conn-badge" id="connBadge">
+    <span class="dot" id="connDot"></span>
+    <span id="connStatus">connecting…</span>
+  </span>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>Node</h2>
+    <div id="nodeStats"></div>
+  </div>
+  <div class="card">
+    <h2>Peers</h2>
+    <div id="peersContent"><div class="loading">waiting for data…</div></div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>Sync</h2>
+    <div id="syncContent"><div class="loading">waiting for data…</div></div>
+  </div>
+  <div class="card">
+    <h2>Cron</h2>
+    <div id="cronContent"><div class="loading">waiting for data…</div></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Activity Log</h2>
+  <div class="event-log" id="eventLog"><div class="empty">No events yet.</div></div>
+</div>
+
+<script>
+// --- state ---
+let ws = null;
+let reconnectTimer = null;
+
+// --- DOM refs ---
+const nodeNameEl = document.getElementById('nodeName');
+const connDot = document.getElementById('connDot');
+const connStatus = document.getElementById('connStatus');
+const nodeStats = document.getElementById('nodeStats');
+const peersContent = document.getElementById('peersContent');
+const syncContent = document.getElementById('syncContent');
+const cronContent = document.getElementById('cronContent');
+const eventLog = document.getElementById('eventLog');
+
+// --- helpers ---
+function ts() {
+  return new Date().toLocaleTimeString();
+}
+
+function log(type, msg) {
+  const entry = document.createElement('div');
+  entry.className = 'entry';
+  entry.innerHTML = `<span class="ts">${ts()}</span><span class="msg">${esc(msg)}</span>`;
+  entry.style.borderLeft = `3px solid ${
+    type === 'peer' ? 'var(--blue)' :
+    type === 'conflict' ? 'var(--yellow)' :
+    type === 'cron' ? 'var(--green)' : 'var(--dim)'
+  }`;
+  entry.style.paddingLeft = '8px';
+  eventLog.appendChild(entry);
+  if (eventLog.children.length > 200) {
+    eventLog.removeChild(eventLog.firstChild);
+  }
+  eventLog.scrollTop = eventLog.scrollHeight;
+  // remove empty placeholder
+  const empty = eventLog.querySelector('.empty');
+  if (empty) empty.remove();
+}
+
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function badge(text, cls) {
+  return `<span class="badge ${cls}">${esc(text)}</span>`;
+}
+
+// --- render functions ---
+function renderStatus(data) {
+  nodeNameEl.textContent = data.node_name || '—';
+  const leaderBadge = data.is_leader ? badge('leader', 'green') : badge('follower', 'dim');
+  nodeStats.innerHTML = `
+    <div class="stat-row"><span class="label">Version</span><span class="value">${esc(data.version)}</span></div>
+    <div class="stat-row"><span class="label">Listen</span><span class="value">${esc(data.listen_addr)}</span></div>
+    <div class="stat-row"><span class="label">Dashboard</span><span class="value">:${data.web_port}</span></div>
+    <div class="stat-row"><span class="label">Uptime</span><span class="value">${fmtUptime(data.uptime_secs)}</span></div>
+    <div class="stat-row"><span class="label">Leadership</span><span class="value">${leaderBadge} ${esc(data.leader_name||'')}</span></div>
+    <div class="stat-row"><span class="label">Peers</span><span class="value">${data.alive_count}/${data.peer_count} alive</span></div>
+    ${data.nat_public_addr ? `<div class="stat-row"><span class="label">NAT</span><span class="value">${esc(data.nat_public_addr)} (${esc(data.nat_type||'?')})</span></div>` : ''}
+  `;
+}
+
+function fmtUptime(s) {
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  let parts = [];
+  if (d > 0) parts.push(d + 'd');
+  if (h > 0) parts.push(h + 'h');
+  if (m > 0) parts.push(m + 'm');
+  parts.push(sec + 's');
+  return parts.join(' ');
+}
+
+function renderPeers(peers) {
+  if (!peers || peers.length === 0) {
+    peersContent.innerHTML = '<div class="empty">No peers connected.</div>';
+    return;
+  }
+  let html = `<table><thead><tr><th>Name</th><th>Address</th><th>Connected</th><th>Status</th></tr></thead><tbody>`;
+  for (const p of peers) {
+    const alive = p.alive ? badge('alive', 'green') : badge('dead', 'red');
+    html += `<tr><td>${esc(p.name)}</td><td>${esc(p.addr)}</td><td>${esc(p.connected||'')}</td><td>${alive}</td></tr>`;
+  }
+  html += `</tbody></table>`;
+  peersContent.innerHTML = html;
+}
+
+function renderSync(data) {
+  if (!data) { syncContent.innerHTML = '<div class="empty">No sync data.</div>'; return; }
+  let html = '';
+  // Watch dirs
+  if (data.watch_dirs && data.watch_dirs.length > 0) {
+    html += `<div class="stat-row"><span class="label">Watch dirs</span><span class="value">${data.watch_dirs.length}</span></div>`;
+    for (const wd of data.watch_dirs) {
+      html += `<div class="stat-row" style="padding-left:16px;font-size:0.8rem"><span class="label">${esc(wd.tag)}</span><span class="value">${esc(wd.path)}</span></div>`;
+    }
+  }
+  // CDC
+  html += `<div class="stat-row"><span class="label">CDC chunking</span><span class="value">${data.cdc_enabled ? badge('enabled', 'green') : badge('disabled', 'dim')}</span></div>`;
+  // Conflicts
+  const conflicts = data.conflicts || [];
+  html += `<div class="stat-row"><span class="label">Conflicts</span><span class="value">${conflicts.length > 0 ? badge(conflicts.length, 'yellow') : '0'}</span></div>`;
+  if (conflicts.length > 0) {
+    html += `<table><thead><tr><th>File</th><th>From</th><th>Time</th></tr></thead><tbody>`;
+    for (const c of conflicts.slice(0, 10)) {
+      html += `<tr><td>${esc(c.path)}</td><td>${esc(c.incoming_node)}</td><td>${esc(c.timestamp||'')}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+  syncContent.innerHTML = html || '<div class="empty">No sync data.</div>';
+}
+
+function renderCron(data) {
+  if (!data) { cronContent.innerHTML = '<div class="empty">No cron data.</div>'; return; }
+  let html = '';
+  const leader = data.is_leader ? badge('leader', 'green') : badge('standby', 'dim');
+  html += `<div class="stat-row"><span class="label">Status</span><span class="value">${leader}</span></div>`;
+  const jobs = data.jobs || [];
+  html += `<div class="stat-row"><span class="label">Jobs</span><span class="value">${jobs.length}</span></div>`;
+  if (jobs.length > 0) {
+    html += `<table><thead><tr><th>Name</th><th>Schedule</th><th>Command</th></tr></thead><tbody>`;
+    for (const j of jobs) {
+      html += `<tr><td>${esc(j.name)}</td><td>${esc(j.schedule)}</td><td style="font-family:monospace;font-size:0.75rem">${esc(j.command)}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+  // History
+  const history = data.history || [];
+  if (history.length > 0) {
+    html += `<div style="margin-top:12px"><strong style="font-size:0.8rem;color:var(--dim);text-transform:uppercase;letter-spacing:0.5px">Recent Executions</strong></div>`;
+    html += `<table><thead><tr><th>Job</th><th>Time</th><th>Result</th><th>Node</th></tr></thead><tbody>`;
+    for (const h of history.slice(0, 20)) {
+      const result = h.success ? badge('ok', 'green') : badge('failed', 'red');
+      html += `<tr><td>${esc(h.name)}</td><td>${esc(h.fired_at||'')}</td><td>${result}</td><td>${esc(h.leader_node||'')}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+  cronContent.innerHTML = html || '<div class="empty">No cron data.</div>';
+}
+
+// --- WebSocket ---
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = `${proto}//${location.host}/api/ws`;
+
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
+  try {
+    ws = new WebSocket(url);
+  } catch (e) {
+    setConnStatus(false, 'connection error');
+    scheduleReconnect();
+    return;
+  }
+
+  ws.onopen = () => setConnStatus(true, 'connected');
+  ws.onclose = () => {
+    setConnStatus(false, 'disconnected');
+    ws = null;
+    scheduleReconnect();
+  };
+  ws.onerror = () => {
+    setConnStatus(false, 'error');
+  };
+  ws.onmessage = (evt) => {
+    try {
+      const msg = JSON.parse(evt.data);
+      handleWSMessage(msg);
+    } catch (e) {
+      console.warn('WS parse error:', e);
+    }
+  };
+}
+
+function setConnStatus(connected, text) {
+  connDot.className = 'dot ' + (connected ? 'green' : 'red');
+  connStatus.textContent = text;
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connectWS();
+  }, 3000);
+}
+
+function handleWSMessage(msg) {
+  switch (msg.type) {
+    case 'state':
+      if (msg.data.status) renderStatus(msg.data.status);
+      if (msg.data.peers) renderPeers(msg.data.peers);
+      if (msg.data.sync) renderSync(msg.data.sync);
+      if (msg.data.cron) renderCron(msg.data.cron);
+      break;
+    case 'peer_joined':
+      log('peer', `Peer joined: ${esc(msg.data.name)}`);
+      break;
+    case 'peer_left':
+      log('peer', `Peer left: ${esc(msg.data.name)}`);
+      break;
+    case 'conflict':
+      log('conflict', `Conflict: ${esc(msg.data.path)} (from ${esc(msg.data.node)})`);
+      break;
+    case 'cron_exec':
+      const status = msg.data.success ? 'completed' : 'failed';
+      log('cron', `Cron job "${esc(msg.data.name)}" ${status} on ${esc(msg.data.node)}`);
+      break;
+    default:
+      // ignore unknown event types
+      break;
+  }
+}
+
+// --- bootstrap ---
+connectWS();
+</script>
+</body>
+</html>

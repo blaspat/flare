@@ -90,18 +90,18 @@
 ## Phase 7: Web Dashboard
 
 ### P1 — Dashboard Backend
-- [ ] `internal/web/server.go` — HTTP server, routes, embed.FS for static assets
-- [ ] `internal/web/api.go` — REST endpoints (status, peers, sync, cron)
-- [ ] `internal/web/ws.go` — WebSocket event push to browser clients
-- [ ] Wire into `main.go` + config (web_port)
+- [x] `internal/web/server.go` — HTTP server, routes, embed.FS for static assets (2026-07-10)
+- [x] `internal/web/api.go` — REST endpoints (status, peers, sync, cron) (2026-07-10)
+- [x] `internal/web/ws.go` — WebSocket event push to browser clients (2026-07-10)
+- [x] Wire into `main.go` + config (web_port) (2026-07-10)
 
 ### P2 — Dashboard Frontend
-- [ ] `index.html` — dashboard layout with cards, tables, event log
-- [ ] `app.js` — WebSocket client, real-time updates, UI rendering
-- [ ] `style.css` — clean dark theme, responsive layout
+- [x] `index.html` — dashboard layout with cards, tables, event log (2026-07-10)
+- [x] `app.js` — WebSocket client, real-time updates, UI rendering (embedded in index.html) (2026-07-10)
+- [x] `style.css` — clean dark theme, responsive layout (embedded in index.html) (2026-07-10)
 
 ### P3 — Polish
 - [ ] Loading/error/empty states
-- [ ] Auto-reconnect WebSocket on disconnect
+- [x] Auto-reconnect WebSocket on disconnect (2026-07-10)
 - [ ] Sort/filter peers table
 - [ ] CLI `flare dashboard` command to open browser

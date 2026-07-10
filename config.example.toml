@@ -6,6 +6,7 @@ name = "node-alpha"                # Unique node name in the mesh
 listen = ":9721"                   # WebSocket listen address for peer connections
 data_dir = "/var/lib/flare"        # Directory for synced files and state
 log_level = "info"                 # debug | info | warn | error
+# web_port = 9722                  # Dashboard HTTP server port (0=disabled)
 # tls_cert = "/etc/flare/cert.pem" # TLS certificate file (enables WSS when both cert & key set)
 # tls_key = "/etc/flare/key.pem"   # TLS private key file (enables WSS when both cert & key set)
 # encryption_key = ""              # AES-256-GCM key (64 hex chars) — enables at-rest encryption

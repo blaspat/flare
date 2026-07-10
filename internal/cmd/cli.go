@@ -22,6 +22,7 @@ import (
 	"github.com/blaspat/flare/internal/nat"
 	flaresync "github.com/blaspat/flare/internal/sync"
 	"github.com/blaspat/flare/internal/term"
+	"github.com/blaspat/flare/internal/web"
 )
 
 var (
@@ -374,6 +375,17 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 
 	// Start mesh listener
 	_ = mesh.StartListener(ctx, cfg.Node.Listen, cfg.Node.Name, h, cfg.Node.TLSCert, cfg.Node.TLSKey, natInfo)
+
+	// Start web dashboard server if web_port is configured
+	if cfg.Node.WebPort > 0 {
+		wsrv := web.New(h, tm, cm, cfg, cfg.Node.Name)
+		go func() {
+			if err := wsrv.Start(ctx, cfg.Node.WebPort); err != nil {
+				slog.Warn("web dashboard stopped", "err", err)
+			}
+		}()
+		slog.Info("web dashboard enabled", "port", cfg.Node.WebPort)
+	}
 
 	// Start sync polling loop — triggered by event-driven watcher,
 	// with initial poll on startup.
