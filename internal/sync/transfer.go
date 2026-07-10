@@ -233,6 +233,21 @@ func (its *IncomingTransferStore) List() []*IncomingTransfer {
 	return out
 }
 
+// --- ConflictRecord ---------------------------------------------------------
+
+// ConflictRecord describes a file conflict that was resolved by renaming the
+// existing file to a conflict path.
+type ConflictRecord struct {
+	Path         string    `json:"path"`          // relative path within tag
+	Tag          string    `json:"tag"`           // watch-dir tag
+	AbsPath      string    `json:"abs_path"`      // original absolute path
+	ConflictPath string    `json:"conflict_path"` // where the existing file was renamed
+	IncomingNode string    `json:"incoming_node"` // node that sent the conflicting version
+	IncomingHash string    `json:"incoming_hash"` // hash of the incoming (accepted) version
+	LocalHash    string    `json:"local_hash"`    // hash of the original (renamed) version
+	Timestamp    time.Time `json:"timestamp"`      // when the conflict was resolved
+}
+
 // --- TransferManager -------------------------------------------------------
 
 // Broadcaster is the interface the mesh layer must satisfy so the transfer
@@ -254,6 +269,9 @@ type TransferManager struct {
 	clock     *VectorClock      // node's own vector clock
 	dirs      []WatchDir        // watch directories (for resolving absolute paths)
 	clockMu   sync.Mutex
+
+	conflicts   []ConflictRecord // records of resolved conflicts
+	conflictMu  sync.RWMutex
 }
 
 // NewTransferManager creates a transfer manager.
@@ -578,6 +596,47 @@ func (tm *TransferManager) finalizeTransfer(t *IncomingTransfer) {
 		return
 	}
 
+	// --- Conflict detection ---
+	// If the destination file already exists with different content, rename it
+	// to a conflict path before writing the incoming version.
+	if existingInfo, statErr := os.Stat(t.AbsPath); statErr == nil && existingInfo.Mode().IsRegular() {
+		existingHash, hashErr := hashFileContent(t.AbsPath)
+		if hashErr != nil {
+			slog.Warn("conflict check: cannot hash existing file, overwriting anyway",
+				"path", t.Path, "err", hashErr)
+		} else if existingHash == t.Hash {
+			// Content is identical — nothing to do. The temp file was already
+			// written with the same content. Clean it up and return.
+			slog.Debug("file unchanged (identical hash), skipping write",
+				"path", t.Path)
+			return
+		} else {
+			conflictPath := fmt.Sprintf("%s.conflict.%s.%d",
+				t.AbsPath, t.NodeID, time.Now().Unix())
+			if err := os.Rename(t.AbsPath, conflictPath); err != nil {
+				slog.Error("conflict: failed to rename existing file, overwriting",
+					"path", t.AbsPath, "err", err)
+			} else {
+				slog.Warn("file conflict detected — renamed existing file",
+					"path", t.Path,
+					"local_hash", existingHash,
+					"incoming_hash", t.Hash,
+					"conflict_path", conflictPath)
+
+				tm.addConflict(ConflictRecord{
+					Path:         t.Path,
+					Tag:          t.Tag,
+					AbsPath:      t.AbsPath,
+					ConflictPath: conflictPath,
+					IncomingNode: t.NodeID,
+					IncomingHash: t.Hash,
+					LocalHash:    existingHash,
+					Timestamp:    time.Now(),
+				})
+			}
+		}
+	}
+
 	// Move temp file to final location.
 	if err := os.Rename(t.tempFile.Name(), t.AbsPath); err != nil {
 		// Fallback: copy and delete.
@@ -758,4 +817,36 @@ func (tm *TransferManager) HandleSyncRequest(from string, req *SyncRequestPayloa
 			slog.Info("sync-request: sent file to peer", "path", f.Path, "to", from)
 		}
 	}
+}
+
+// --- Conflict management ----------------------------------------------------
+
+// Conflicts returns a copy of all recorded conflict records.
+func (tm *TransferManager) Conflicts() []ConflictRecord {
+	tm.conflictMu.RLock()
+	defer tm.conflictMu.RUnlock()
+	out := make([]ConflictRecord, len(tm.conflicts))
+	copy(out, tm.conflicts)
+	return out
+}
+
+// addConflict appends a conflict record.
+func (tm *TransferManager) addConflict(r ConflictRecord) {
+	tm.conflictMu.Lock()
+	defer tm.conflictMu.Unlock()
+	tm.conflicts = append(tm.conflicts, r)
+}
+
+// hashFileContent reads a file and returns its SHA-256 hex digest.
+func hashFileContent(absPath string) (string, error) {
+	f, err := os.Open(absPath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }

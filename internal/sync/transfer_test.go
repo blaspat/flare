@@ -571,3 +571,337 @@ func TestTransferManager_HandleDeletion_NonExistentFile(t *testing.T) {
 	tm.HandleFileChange("sender", announce)
 	// No panic = pass.
 }
+
+// --- Conflict handling tests ------------------------------------------------
+
+func TestTransferManager_Conflict_RenamesExisting(t *testing.T) {
+	dir := t.TempDir()
+	watchDir := filepath.Join(dir, "watch")
+	dataDir := filepath.Join(dir, "data")
+
+	// Create an existing file at the destination with different content.
+	if err := os.MkdirAll(watchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	existingContent := []byte("this is the original content")
+	destPath := filepath.Join(watchDir, "conflict.dat")
+	if err := os.WriteFile(destPath, existingContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+	existingHash := hashOf(existingContent)
+
+	// Incoming content is different.
+	incomingContent := []byte("this is the incoming content from another node")
+
+	tm := NewTransferManager("receiver", dataDir, 65536,
+		NewFileTracker(nil), nullBroadcast,
+		[]WatchDir{
+			{Path: watchDir, Tag: "default"},
+		})
+
+	// Announce the incoming file.
+	announce := &FileChangeAnnounce{
+		Path:       "conflict.dat",
+		Tag:        "default",
+		Size:       int64(len(incomingContent)),
+		Hash:       hashOf(incomingContent),
+		Version:    10,
+		NodeID:     "node-a",
+		ChunkSize:  65536,
+		ChunkCount: 1,
+		ModTime:    time.Now().UnixNano(),
+	}
+	tm.HandleFileChange("node-a", announce)
+
+	// Send the single chunk.
+	chunk := &FileChunkPayload{
+		Path:       "conflict.dat",
+		ChunkIndex: 0,
+		ChunkCount: 1,
+		Data:       toB64(incomingContent),
+		Version:    10,
+	}
+	tm.HandleFileChunk("node-a", chunk)
+
+	// Verify the incoming file was written to the destination.
+	got, err := os.ReadFile(destPath)
+	if err != nil {
+		t.Fatalf("read destination file: %v", err)
+	}
+	if string(got) != string(incomingContent) {
+		t.Errorf("destination content mismatch: want %q, got %q", incomingContent, got)
+	}
+
+	// Verify the original file was renamed to a conflict path.
+	// Should match pattern: conflict.dat.conflict.node-a.<timestamp>
+	conflictPattern := "conflict.dat.conflict.node-a."
+	foundConflict := false
+	entries, err := os.ReadDir(watchDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), conflictPattern) {
+			foundConflict = true
+			// Verify the conflict file has the original content.
+			conflictData, err := os.ReadFile(filepath.Join(watchDir, e.Name()))
+			if err != nil {
+				t.Fatalf("read conflict file: %v", err)
+			}
+			if string(conflictData) != string(existingContent) {
+				t.Errorf("conflict file content mismatch: want %q, got %q", existingContent, conflictData)
+			}
+			break
+		}
+	}
+	if !foundConflict {
+		t.Errorf("expected a conflict file with prefix %q in %s, got %v",
+			conflictPattern, watchDir, listDirEntries(t, watchDir))
+	}
+
+	// Verify conflict was recorded.
+	conflicts := tm.Conflicts()
+	if len(conflicts) != 1 {
+		t.Fatalf("expected 1 conflict record, got %d", len(conflicts))
+	}
+	if conflicts[0].Path != "conflict.dat" {
+		t.Errorf("conflict Path: want conflict.dat, got %s", conflicts[0].Path)
+	}
+	if conflicts[0].IncomingNode != "node-a" {
+		t.Errorf("conflict IncomingNode: want node-a, got %s", conflicts[0].IncomingNode)
+	}
+	if conflicts[0].LocalHash != existingHash {
+		t.Errorf("conflict LocalHash: want %s, got %s", existingHash, conflicts[0].LocalHash)
+	}
+	if conflicts[0].IncomingHash != hashOf(incomingContent) {
+		t.Errorf("conflict IncomingHash: want %s, got %s", hashOf(incomingContent), conflicts[0].IncomingHash)
+	}
+}
+
+func TestTransferManager_Conflict_SameContentSkipsWrite(t *testing.T) {
+	dir := t.TempDir()
+	watchDir := filepath.Join(dir, "watch")
+	dataDir := filepath.Join(dir, "data")
+
+	// Create an existing file at the destination with the same content as incoming.
+	if err := os.MkdirAll(watchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("this content is identical on both sides")
+	destPath := filepath.Join(watchDir, "same.dat")
+	origModTime := time.Now().Add(-1 * time.Hour)
+	if err := os.WriteFile(destPath, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Set a specific mtime so we can verify the file wasn't touched.
+	if err := os.Chtimes(destPath, origModTime, origModTime); err != nil {
+		t.Fatal(err)
+	}
+
+	tm := NewTransferManager("receiver", dataDir, 65536,
+		NewFileTracker(nil), nullBroadcast,
+		[]WatchDir{
+			{Path: watchDir, Tag: "default"},
+		})
+
+	announce := &FileChangeAnnounce{
+		Path:       "same.dat",
+		Tag:        "default",
+		Size:       int64(len(content)),
+		Hash:       hashOf(content),
+		Version:    10,
+		NodeID:     "node-b",
+		ChunkSize:  65536,
+		ChunkCount: 1,
+		ModTime:    time.Now().UnixNano(),
+	}
+	tm.HandleFileChange("node-b", announce)
+
+	chunk := &FileChunkPayload{
+		Path:       "same.dat",
+		ChunkIndex: 0,
+		ChunkCount: 1,
+		Data:       toB64(content),
+		Version:    10,
+	}
+	tm.HandleFileChunk("node-b", chunk)
+
+	// Verify the destination file was NOT renamed (no conflict file).
+	entries, err := os.ReadDir(watchDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".conflict.") {
+			t.Errorf("unexpected conflict file created when content is identical: %s", e.Name())
+		}
+	}
+
+	// Verify original file still exists with its original mtime.
+	info, err := os.Stat(destPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(origModTime) {
+		t.Errorf("expected mtime %v, got %v — file was touched unnecessarily", origModTime, info.ModTime())
+	}
+
+	// Verify no conflict was recorded.
+	if len(tm.Conflicts()) != 0 {
+		t.Errorf("expected 0 conflicts for identical content, got %d", len(tm.Conflicts()))
+	}
+}
+
+func TestTransferManager_Conflict_NoConflictWhenDestMissing(t *testing.T) {
+	dir := t.TempDir()
+	watchDir := filepath.Join(dir, "watch")
+	dataDir := filepath.Join(dir, "data")
+
+	content := []byte("fresh file, no existing copy")
+	tm := NewTransferManager("receiver", dataDir, 65536,
+		NewFileTracker(nil), nullBroadcast,
+		[]WatchDir{
+			{Path: watchDir, Tag: "default"},
+		})
+
+	announce := &FileChangeAnnounce{
+		Path:       "new.dat",
+		Tag:        "default",
+		Size:       int64(len(content)),
+		Hash:       hashOf(content),
+		Version:    1,
+		NodeID:     "node-c",
+		ChunkSize:  65536,
+		ChunkCount: 1,
+		ModTime:    time.Now().UnixNano(),
+	}
+	tm.HandleFileChange("node-c", announce)
+
+	chunk := &FileChunkPayload{
+		Path:       "new.dat",
+		ChunkIndex: 0,
+		ChunkCount: 1,
+		Data:       toB64(content),
+		Version:    1,
+	}
+	tm.HandleFileChunk("node-c", chunk)
+
+	// Verify file was written correctly.
+	destPath := filepath.Join(watchDir, "new.dat")
+	got, err := os.ReadFile(destPath)
+	if err != nil {
+		t.Fatalf("read destination: %v", err)
+	}
+	if string(got) != string(content) {
+		t.Errorf("content mismatch")
+	}
+
+	// Verify no conflict was recorded.
+	if len(tm.Conflicts()) != 0 {
+		t.Errorf("expected 0 conflicts for fresh file, got %d", len(tm.Conflicts()))
+	}
+}
+
+func TestTransferManager_MultipleConflicts(t *testing.T) {
+	dir := t.TempDir()
+	watchDir := filepath.Join(dir, "watch")
+	dataDir := filepath.Join(dir, "data")
+
+	if err := os.MkdirAll(watchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	tm := NewTransferManager("receiver", dataDir, 65536,
+		NewFileTracker(nil), nullBroadcast,
+		[]WatchDir{
+			{Path: watchDir, Tag: "default"},
+		})
+
+	// Set up: create 3 existing files with different content.
+	files := []struct {
+		name    string
+		existing []byte
+		incoming []byte
+		nodeID  string
+	}{
+		{"file1.txt", []byte("original content A"), []byte("incoming content A"), "node-a"},
+		{"file2.txt", []byte("original content B"), []byte("incoming content B"), "node-b"},
+		{"file3.txt", []byte("original content C"), []byte("incoming content C"), "node-c"},
+	}
+
+	for _, f := range files {
+		destPath := filepath.Join(watchDir, f.name)
+		if err := os.WriteFile(destPath, f.existing, 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		announce := &FileChangeAnnounce{
+			Path:       f.name,
+			Tag:        "default",
+			Size:       int64(len(f.incoming)),
+			Hash:       hashOf(f.incoming),
+			Version:    5,
+			NodeID:     f.nodeID,
+			ChunkSize:  65536,
+			ChunkCount: 1,
+			ModTime:    time.Now().UnixNano(),
+		}
+		tm.HandleFileChange(f.nodeID, announce)
+
+		chunk := &FileChunkPayload{
+			Path:       f.name,
+			ChunkIndex: 0,
+			ChunkCount: 1,
+			Data:       toB64(f.incoming),
+			Version:    5,
+		}
+		tm.HandleFileChunk(f.nodeID, chunk)
+	}
+
+	// Verify all 3 conflicts recorded.
+	conflicts := tm.Conflicts()
+	if len(conflicts) != 3 {
+		t.Fatalf("expected 3 conflicts, got %d", len(conflicts))
+	}
+
+	// Verify incoming files were written correctly.
+	for _, f := range files {
+		got, err := os.ReadFile(filepath.Join(watchDir, f.name))
+		if err != nil {
+			t.Errorf("read %s: %v", f.name, err)
+			continue
+		}
+		if string(got) != string(f.incoming) {
+			t.Errorf("%s: expected incoming content, got %q", f.name, got)
+		}
+	}
+
+	// Verify conflict files exist.
+	entries, err := os.ReadDir(watchDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflictCount := 0
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".conflict.") {
+			conflictCount++
+		}
+	}
+	if conflictCount != 3 {
+		t.Errorf("expected 3 conflict files on disk, got %d: %v", conflictCount, listDirEntries(t, watchDir))
+	}
+}
+
+// listDirEntries returns a comma-separated list of directory entry names (test helper).
+func listDirEntries(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir %s: %v", dir, err)
+	}
+	names := make([]string, len(entries))
+	for i, e := range entries {
+		names[i] = e.Name()
+	}
+	return names
+}

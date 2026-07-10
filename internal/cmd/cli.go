@@ -26,6 +26,9 @@ import (
 var (
 	hubMu sync.RWMutex
 	hub   *mesh.Hub
+
+	trMu sync.RWMutex
+	tr   *flaresync.TransferManager
 )
 
 type Command struct {
@@ -215,6 +218,9 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 		func(data []byte) { h.Broadcast(data) },
 		watchDirs,
 	)
+	trMu.Lock()
+	tr = sm
+	trMu.Unlock()
 
 	// Register sync message handlers with the hub.
 	h.HandleMessageType(mesh.MsgFileChange, func(msg *mesh.Message, peer *mesh.PeerState) {
@@ -635,6 +641,30 @@ func statusCmd(ctx context.Context, cfgPath string, args []string) error {
 	fmt.Printf("  %sSync:  %s%d watch dir(s)\n", term.Bold, term.Reset, watchCount)
 	jobCount := len(cfg.Cron.Jobs)
 	fmt.Printf("  %sCron:  %s%d job(s)\n", term.Bold, term.Reset, jobCount)
+
+	// Show conflict status.
+	trMu.RLock()
+	transferMgr := tr
+	trMu.RUnlock()
+	if transferMgr != nil {
+		conflicts := transferMgr.Conflicts()
+		if len(conflicts) > 0 {
+			fmt.Printf("  %sConflicts: %s%d\n", term.Bold+term.Yellow, term.Reset, len(conflicts))
+			for i, c := range conflicts {
+				if len(conflicts) > 5 && i >= 5 {
+					fmt.Printf("    %s... and %d more%s\n", term.Dim, len(conflicts)-5, term.Reset)
+					break
+				}
+				fmt.Printf("    %s%s%s → %s%s%s\n",
+					term.Yellow, c.Path, term.Reset,
+					term.Dim, c.ConflictPath, term.Reset)
+				fmt.Printf("      from %s at %s\n", c.IncomingNode, c.Timestamp.Format(time.RFC3339))
+			}
+		} else {
+			fmt.Printf("  %sConflicts: %s0\n", term.Bold, term.Reset)
+		}
+	}
+
 	return nil
 }
 
