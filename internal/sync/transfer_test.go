@@ -219,7 +219,7 @@ func TestTransferManager_ResolveDestPath(t *testing.T) {
 		[]WatchDir{
 			{Path: "/watch/configs", Tag: "configs"},
 			{Path: "/watch/data", Tag: "data"},
-		})
+		}, nil)
 
 	dest := tm.resolveDestPath("configs", "nginx/nginx.conf")
 	if dest != "/watch/configs/nginx/nginx.conf" {
@@ -243,7 +243,7 @@ func TestTransferManager_RelativePath(t *testing.T) {
 		NewFileTracker(nil), nullBroadcast,
 		[]WatchDir{
 			{Path: "/watch/configs", Tag: "configs"},
-		})
+		}, nil)
 
 	rel := tm.relativePath("/watch/configs/nginx/nginx.conf", "configs")
 	if rel != "nginx/nginx.conf" {
@@ -264,7 +264,7 @@ func TestTransferManager_HandleFileChangeAndChunk_Success(t *testing.T) {
 		NewFileTracker(nil), nullBroadcast,
 		[]WatchDir{
 			{Path: watchDir, Tag: "default"},
-		})
+		}, nil)
 
 	// Simulate receiving a FileChangeAnnounce.
 	announce := &FileChangeAnnounce{
@@ -321,7 +321,7 @@ func TestTransferManager_HandleFileChangeAndChunk_Success(t *testing.T) {
 
 func TestTransferManager_HandleUnknownChunk(t *testing.T) {
 	tm := NewTransferManager("receiver", t.TempDir(), 65536,
-		NewFileTracker(nil), nullBroadcast, nil)
+		NewFileTracker(nil), nullBroadcast, nil, nil)
 
 	// Sending a chunk without first sending an announcement should not panic.
 	chunk := &FileChunkPayload{
@@ -337,7 +337,7 @@ func TestTransferManager_HandleUnknownChunk(t *testing.T) {
 
 func TestTransferManager_FindMissingChunks(t *testing.T) {
 	tm := NewTransferManager("receiver", t.TempDir(), 65536,
-		NewFileTracker(nil), nullBroadcast, nil)
+		NewFileTracker(nil), nullBroadcast, nil, nil)
 
 	transfer := &IncomingTransfer{
 		Path:       "test.dat",
@@ -375,7 +375,7 @@ func TestTransferManager_HandleFileChunk_OutOfOrder(t *testing.T) {
 		NewFileTracker(nil), nullBroadcast,
 		[]WatchDir{
 			{Path: watchDir, Tag: "default"},
-		})
+		}, nil)
 
 	announce := &FileChangeAnnounce{
 		Path:       "outoforder.dat",
@@ -413,7 +413,7 @@ func TestTransferManager_HandleFileChunk_OutOfOrder(t *testing.T) {
 
 func TestTransferManager_CleanStaleTransfers(t *testing.T) {
 	tm := NewTransferManager("receiver", t.TempDir(), 65536,
-		NewFileTracker(nil), nullBroadcast, nil)
+		NewFileTracker(nil), nullBroadcast, nil, nil)
 
 	// Manually add a transfer with an old timestamp.
 	oldTransfer := &IncomingTransfer{
@@ -472,7 +472,7 @@ func TestTransferManager_BroadcastOnPoll(t *testing.T) {
 		tracker, broadcast,
 		[]WatchDir{
 			{Path: watchDir, Tag: "default"},
-		})
+		}, nil)
 
 	if err := tm.Poll(); err != nil {
 		t.Fatalf("Poll failed: %v", err)
@@ -499,7 +499,7 @@ func TestTransferManager_BroadcastOnPoll(t *testing.T) {
 
 func TestTransferManager_DuplicateAnnounce(t *testing.T) {
 	tm := NewTransferManager("receiver", t.TempDir(), 65536,
-		NewFileTracker(nil), nullBroadcast, nil)
+		NewFileTracker(nil), nullBroadcast, nil, nil)
 
 	announce := &FileChangeAnnounce{
 		Path:    "dup.dat",
@@ -535,7 +535,7 @@ func TestTransferManager_HandleDeletion(t *testing.T) {
 		NewFileTracker(nil), nullBroadcast,
 		[]WatchDir{
 			{Path: watchDir, Tag: "default"},
-		})
+		}, nil)
 
 	// Send a deletion announcement (Size == -1 signals deletion).
 	announce := &FileChangeAnnounce{
@@ -558,7 +558,7 @@ func TestTransferManager_HandleDeletion_NonExistentFile(t *testing.T) {
 		NewFileTracker(nil), nullBroadcast,
 		[]WatchDir{
 			{Path: "/nonexistent/watch", Tag: "default"},
-		})
+		}, nil)
 
 	// Deleting a file that doesn't exist should not error.
 	announce := &FileChangeAnnounce{
@@ -597,7 +597,7 @@ func TestTransferManager_Conflict_RenamesExisting(t *testing.T) {
 		NewFileTracker(nil), nullBroadcast,
 		[]WatchDir{
 			{Path: watchDir, Tag: "default"},
-		})
+		}, nil)
 
 	// Announce the incoming file.
 	announce := &FileChangeAnnounce{
@@ -702,7 +702,7 @@ func TestTransferManager_Conflict_SameContentSkipsWrite(t *testing.T) {
 		NewFileTracker(nil), nullBroadcast,
 		[]WatchDir{
 			{Path: watchDir, Tag: "default"},
-		})
+		}, nil)
 
 	announce := &FileChangeAnnounce{
 		Path:       "same.dat",
@@ -762,7 +762,7 @@ func TestTransferManager_Conflict_NoConflictWhenDestMissing(t *testing.T) {
 		NewFileTracker(nil), nullBroadcast,
 		[]WatchDir{
 			{Path: watchDir, Tag: "default"},
-		})
+		}, nil)
 
 	announce := &FileChangeAnnounce{
 		Path:       "new.dat",
@@ -815,7 +815,7 @@ func TestTransferManager_MultipleConflicts(t *testing.T) {
 		NewFileTracker(nil), nullBroadcast,
 		[]WatchDir{
 			{Path: watchDir, Tag: "default"},
-		})
+		}, nil)
 
 	// Set up: create 3 existing files with different content.
 	files := []struct {

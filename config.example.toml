@@ -24,6 +24,8 @@ watch_dirs = [                     # Directories to sync across the mesh
 ]
 poll_interval = "5s"               # File system poll interval
 chunk_size = 65536                 # Transfer chunk size in bytes
+# bandwidth_limit = 1048576        # Max bytes/sec for outgoing transfers (0=unlimited, default)
+# bandwidth_burst = 2097152        # Burst size in bytes (default = bandwidth_limit)
 
 [cron]
 enabled = true                     # Enable distributed cron scheduler

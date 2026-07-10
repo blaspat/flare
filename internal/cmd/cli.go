@@ -214,6 +214,19 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 	// Create file tracker for sync.
 	tracker := flaresync.NewFileTracker(watchDirs)
 
+	// Create bandwidth throttler (nil = unlimited).
+	bandwidthLimit := cfg.EffectiveBandwidthLimit()
+	bandwidthBurst := cfg.EffectiveBandwidthBurst()
+	var throttler *flaresync.Throttler
+	if bandwidthLimit > 0 {
+		throttler = flaresync.NewThrottler(bandwidthLimit, bandwidthBurst)
+		slog.Info("bandwidth throttling enabled",
+			"limit_bytes_per_sec", bandwidthLimit,
+			"burst_bytes", bandwidthBurst)
+	} else {
+		slog.Debug("bandwidth throttling disabled (unlimited)")
+	}
+
 	// Create transfer manager.
 	sm := flaresync.NewTransferManager(
 		cfg.Node.Name,
@@ -222,6 +235,7 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 		tracker,
 		func(data []byte) { h.Broadcast(data) },
 		watchDirs,
+		throttler,
 	)
 	trMu.Lock()
 	tr = sm
@@ -488,6 +502,17 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 
 	// Create file tracker and transfer manager.
 	tracker := flaresync.NewFileTracker(watchDirs)
+	bandwidthLimit := cfg.EffectiveBandwidthLimit()
+	bandwidthBurst := cfg.EffectiveBandwidthBurst()
+	var throttler *flaresync.Throttler
+	if bandwidthLimit > 0 {
+		throttler = flaresync.NewThrottler(bandwidthLimit, bandwidthBurst)
+		slog.Info("bandwidth throttling enabled",
+			"limit_bytes_per_sec", bandwidthLimit,
+			"burst_bytes", bandwidthBurst)
+	} else {
+		slog.Debug("bandwidth throttling disabled (unlimited)")
+	}
 	sm := flaresync.NewTransferManager(
 		cfg.Node.Name,
 		cfg.Node.DataDir,
@@ -495,6 +520,7 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 		tracker,
 		func(data []byte) { h.Broadcast(data) },
 		watchDirs,
+		throttler,
 	)
 
 	// Register sync message handlers.

@@ -3,6 +3,7 @@
 package sync
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -270,6 +271,8 @@ type TransferManager struct {
 	dirs      []WatchDir        // watch directories (for resolving absolute paths)
 	clockMu   sync.Mutex
 
+	throttler *Throttler // bandwidth limiter for outgoing chunks (nil = unlimited)
+
 	conflicts   []ConflictRecord // records of resolved conflicts
 	conflictMu  sync.RWMutex
 }
@@ -281,6 +284,7 @@ type TransferManager struct {
 //   - tracker: the file tracker (change detector)
 //   - broadcast: function that sends a serialized Message to all peers
 //   - dirs: watch directories (used to resolve relative paths)
+//   - throttler: bandwidth limiter (nil = unlimited)
 func NewTransferManager(
 	nodeID string,
 	dataDir string,
@@ -288,6 +292,7 @@ func NewTransferManager(
 	tracker *FileTracker,
 	broadcast func(data []byte),
 	dirs []WatchDir,
+	throttler *Throttler,
 ) *TransferManager {
 	if chunkSize <= 0 {
 		chunkSize = 65536
@@ -301,6 +306,7 @@ func NewTransferManager(
 		broadcast: broadcast,
 		clock:     NewVectorClock(),
 		dirs:      dirs,
+		throttler: throttler,
 	}
 }
 
@@ -475,10 +481,17 @@ func (tm *TransferManager) HandleFileResume(from string, req *FileResumeRequest)
 		return
 	}
 
-	// Send only missing chunks.
+	// Send only missing chunks with bandwidth throttling.
+	ctx := context.Background()
 	for _, chunk := range cf.Chunks {
 		if !missing[chunk.Index] {
 			continue
+		}
+		if tm.throttler != nil {
+			if err := tm.throttler.WaitN(ctx, len(chunk.Data)); err != nil {
+				slog.Warn("resume throttle interrupted", "path", req.Path, "err", err)
+				return
+			}
 		}
 		payload := &FileChunkPayload{
 			Path:       req.Path,
@@ -521,8 +534,14 @@ func (tm *TransferManager) sendFile(tf *TrackedFile) error {
 	}
 	tm.sendMsg("file_change", announce)
 
-	// Send each chunk.
+	// Send each chunk with bandwidth throttling.
+	ctx := context.Background()
 	for _, chunk := range cf.Chunks {
+		if tm.throttler != nil {
+			if err := tm.throttler.WaitN(ctx, len(chunk.Data)); err != nil {
+				return fmt.Errorf("throttle interrupted: %w", err)
+			}
+		}
 		payload := &FileChunkPayload{
 			Path:       relPath,
 			ChunkIndex: chunk.Index,

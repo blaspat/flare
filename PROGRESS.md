@@ -49,10 +49,10 @@
 - [x] Configurable min/max delay
 - [x] Circuit breaker after N consecutive failures
 
-### P4 — Bandwidth Throttling
-- [ ] Token bucket rate limiter for transfers
-- [ ] Configurable bytes-per-second limit
-- [ ] Per-peer throttle configuration
+### P4 — Bandwidth Throttling ✅ (2026-07-10)
+- [x] Token bucket rate limiter for transfers
+- [x] Configurable bytes-per-second limit
+- [x] Per-peer throttle configuration
 
 ### P4 — Direct TLS
 - [ ] `tls_cert` / `tls_key` config options

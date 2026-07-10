@@ -33,9 +33,11 @@ type MeshConfig struct {
 }
 
 type SyncConfig struct {
-	WatchDirs   []WatchDir     `toml:"watch_dirs"`
-	PollInterval time.Duration `toml:"poll_interval"`
-	ChunkSize   int            `toml:"chunk_size"`
+	WatchDirs      []WatchDir     `toml:"watch_dirs"`
+	PollInterval   time.Duration  `toml:"poll_interval"`
+	ChunkSize      int            `toml:"chunk_size"`
+	BandwidthLimit int64          `toml:"bandwidth_limit"` // bytes/sec (0 = unlimited)
+	BandwidthBurst int64          `toml:"bandwidth_burst"` // burst size (0 = defaults to rate)
 }
 
 type WatchDir struct {
@@ -146,4 +148,20 @@ func (c *Config) EffectiveCircuitBreakerLimit() int {
 		return 0
 	}
 	return c.Mesh.CircuitBreakerLimit
+}
+
+// EffectiveBandwidthLimit returns BandwidthLimit (bytes/sec), defaulting to 0 (unlimited).
+func (c *Config) EffectiveBandwidthLimit() int64 {
+	if c.Sync.BandwidthLimit < 0 {
+		return 0
+	}
+	return c.Sync.BandwidthLimit
+}
+
+// EffectiveBandwidthBurst returns BandwidthBurst, or falls back to bandwidth_limit (1 sec's worth).
+func (c *Config) EffectiveBandwidthBurst() int64 {
+	if c.Sync.BandwidthBurst > 0 {
+		return c.Sync.BandwidthBurst
+	}
+	return c.EffectiveBandwidthLimit()
 }
