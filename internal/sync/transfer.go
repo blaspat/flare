@@ -23,16 +23,30 @@ import (
 // FileChangeAnnounce is broadcast when a tracked file is created or modified.
 // It carries enough metadata for the receiver to decide whether to accept the
 // file and how to reassemble it.
+//
+// To support backward-compatible content-defined chunking (CDC), the optional
+// Chunks field holds a chunk index. When Chunks is non-nil the receiver treats
+// the transfer as CDC mode (variable-size, sequential write); when Chunks is
+// nil the receiver uses the traditional fixed-size mode (ChunkSize-based
+// offset writes). Old clients that don't know about Chunks ignore the field
+// via JSON omitempty and continue using the fixed-size path.
 type FileChangeAnnounce struct {
-	Path       string `json:"path"`        // relative path within the watch tag
-	Tag        string `json:"tag"`         // watch-dir tag
-	Size       int64  `json:"size"`        // total file size in bytes
-	Hash       string `json:"hash"`        // hex-encoded SHA-256 of the whole file
-	Version    uint64 `json:"version"`     // tracker version
-	NodeID     string `json:"node_id"`     // originating node
-	ChunkSize  int    `json:"chunk_size"`  // size of each chunk in bytes (last may be smaller)
-	ChunkCount int    `json:"chunk_count"` // total number of chunks
-	ModTime    int64  `json:"mod_time"`    // unix-nano modification time
+	Path       string         `json:"path"`        // relative path within the watch tag
+	Tag        string         `json:"tag"`         // watch-dir tag
+	Size       int64          `json:"size"`        // total file size in bytes
+	Hash       string         `json:"hash"`        // hex-encoded SHA-256 of the whole file
+	Version    uint64         `json:"version"`     // tracker version
+	NodeID     string         `json:"node_id"`     // originating node
+	ChunkSize  int            `json:"chunk_size"`  // fixed chunk size (0 in CDC mode)
+	ChunkCount int            `json:"chunk_count"` // total number of chunks
+	ModTime    int64          `json:"mod_time"`    // unix-nano modification time
+	Chunks     []CDCChunkMeta `json:"chunks,omitempty"` // CDC chunk index (nil = fixed-size mode)
+	// DeltaIndices restricts data transfer to only the listed chunk indices.
+	// When present and non-empty, only the chunks whose indices appear in this
+	// list carry new data; the remaining chunks are unchanged and the receiver
+	// may reconstruct them from its local copy. When nil or empty, all chunks
+	// carry data (full transfer).
+	DeltaIndices []int `json:"delta,omitempty"`
 }
 
 // FileChunkPayload carries one chunk of file data.
@@ -184,6 +198,15 @@ type IncomingTransfer struct {
 	StartedAt    time.Time
 	LastActivity time.Time
 	tempFile     *os.File
+
+	// CDC mode fields. cdcChunks is non-nil when the transfer uses content-
+	// defined chunking. In CDC mode the receiver writes data sequentially
+	// (not at fixed offsets) and cdcWritten tracks progress.
+	cdcChunks  []CDCChunkMeta
+	cdcWritten int64
+	// deltaIndices restricts expected data to only the listed indices when
+	// non-nil (delta sync).
+	deltaIndices []int
 }
 
 // IncomingTransferStore manages active incoming transfers.
@@ -275,12 +298,18 @@ type TransferManager struct {
 
 	conflicts   []ConflictRecord // records of resolved conflicts
 	conflictMu  sync.RWMutex
+
+	// CDC (content-defined chunking) state.
+	cdcEnabled bool                     // when true, new sends use CDC chunking
+	cdcAvgSize int                      // average CDC chunk size (default: chunkSize)
+	cdcCache   map[string][]CDCChunkMeta // last-known CDC chunk index per absolute path
+	cdcCacheMu sync.RWMutex
 }
 
 // NewTransferManager creates a transfer manager.
 //   - nodeID: the local node name (used in wire protocol and vector clock)
 //   - dataDir: root directory for staging incoming transfers
-//   - chunkSize: max bytes per chunk (default 65536)
+//   - chunkSize: max bytes per chunk (default 65536); also used as average CDC chunk size
 //   - tracker: the file tracker (change detector)
 //   - broadcast: function that sends a serialized Message to all peers
 //   - dirs: watch directories (used to resolve relative paths)
@@ -298,15 +327,18 @@ func NewTransferManager(
 		chunkSize = 65536
 	}
 	return &TransferManager{
-		nodeID:    nodeID,
-		dataDir:   dataDir,
-		chunkSize: chunkSize,
-		tracker:   tracker,
-		incoming:  NewIncomingTransferStore(),
-		broadcast: broadcast,
-		clock:     NewVectorClock(),
-		dirs:      dirs,
-		throttler: throttler,
+		nodeID:     nodeID,
+		dataDir:    dataDir,
+		chunkSize:  chunkSize,
+		tracker:    tracker,
+		incoming:   NewIncomingTransferStore(),
+		broadcast:  broadcast,
+		clock:      NewVectorClock(),
+		dirs:       dirs,
+		throttler:  throttler,
+		cdcEnabled: true,     // enabled by default; can be disabled via WithCDCOption
+		cdcAvgSize: chunkSize, // match existing chunk size for consistency
+		cdcCache:   make(map[string][]CDCChunkMeta),
 	}
 }
 
@@ -356,6 +388,10 @@ func (tm *TransferManager) CleanStaleTransfers(timeout time.Duration) int {
 // It creates an IncomingTransfer entry and prepares to receive chunks.
 // If the announcement has Size == -1, the file was deleted on the sender side
 // and the local copy is removed.
+//
+// When a.Chunks is non-nil the transfer uses content-defined chunking (CDC).
+// In CDC mode the temp file is not pre-allocated (sizes are variable) — chunks
+// are written sequentially instead of at fixed offsets.
 func (tm *TransferManager) HandleFileChange(from string, a *FileChangeAnnounce) {
 	// Handle deletion signal.
 	if a.Size == -1 {
@@ -384,6 +420,8 @@ func (tm *TransferManager) HandleFileChange(from string, a *FileChangeAnnounce) 
 		return
 	}
 
+	isCDC := len(a.Chunks) > 0
+
 	// Create temp file for assembly.
 	tmpDir := filepath.Join(tm.dataDir, ".incoming")
 	if err := os.MkdirAll(tmpDir, 0755); err != nil {
@@ -396,8 +434,8 @@ func (tm *TransferManager) HandleFileChange(from string, a *FileChangeAnnounce) 
 		return
 	}
 
-	// Pre-allocate the file to avoid fragmentation.
-	if a.Size > 0 {
+	// Pre-allocate the file only for fixed-size mode (CDC chunks vary in size).
+	if !isCDC && a.Size > 0 {
 		if err := tmpFile.Truncate(a.Size); err != nil {
 			slog.Warn("pre-allocate temp file", "err", err)
 		}
@@ -417,16 +455,23 @@ func (tm *TransferManager) HandleFileChange(from string, a *FileChangeAnnounce) 
 		StartedAt:    time.Now(),
 		LastActivity: time.Now(),
 		tempFile:     tmpFile,
+		cdcChunks:    a.Chunks,
+		deltaIndices: a.DeltaIndices,
 	}
 	tm.incoming.Set(t)
 
-	slog.Debug("incoming file transfer started",
-		"path", a.Path, "from", from, "size", a.Size, "chunks", a.ChunkCount)
+	if isCDC {
+		slog.Debug("incoming CDC file transfer started",
+			"path", a.Path, "from", from, "size", a.Size, "cdc_chunks", len(a.Chunks))
+	} else {
+		slog.Debug("incoming file transfer started",
+			"path", a.Path, "from", from, "size", a.Size, "chunks", a.ChunkCount)
+	}
 }
 
 // HandleFileChunk processes an incoming file chunk, writing it to the temp
-// file at the correct offset. If all chunks are received, the file is verified
-// and moved to its final location.
+// file at the correct offset (fixed-size mode) or sequentially (CDC mode).
+// If all chunks are received, the file is verified and moved to its final location.
 func (tm *TransferManager) HandleFileChunk(from string, c *FileChunkPayload) {
 	t := tm.incoming.Get(c.Path, from, c.Version)
 	if t == nil {
@@ -442,11 +487,26 @@ func (tm *TransferManager) HandleFileChunk(from string, c *FileChunkPayload) {
 		return
 	}
 
-	// Write at the correct offset.
-	offset := int64(c.ChunkIndex) * int64(t.ChunkSize)
-	if _, err := t.tempFile.WriteAt(data, offset); err != nil {
-		slog.Error("write chunk to temp file", "path", c.Path, "index", c.ChunkIndex, "err", err)
-		return
+	if t.cdcChunks != nil {
+		// CDC mode: write at the chunk's content-defined offset.
+		// Use offset from the CDC meta so chunks can arrive in any order.
+		if c.ChunkIndex < 0 || c.ChunkIndex >= len(t.cdcChunks) {
+			slog.Error("CDC chunk index out of range",
+				"path", c.Path, "index", c.ChunkIndex, "total_cdc", len(t.cdcChunks))
+			return
+		}
+		expected := t.cdcChunks[c.ChunkIndex]
+		if _, err := t.tempFile.WriteAt(data, expected.Offset); err != nil {
+			slog.Error("write CDC chunk to temp file", "path", c.Path, "index", c.ChunkIndex, "err", err)
+			return
+		}
+	} else {
+		// Fixed-size mode: write at the correct offset.
+		offset := int64(c.ChunkIndex) * int64(t.ChunkSize)
+		if _, err := t.tempFile.WriteAt(data, offset); err != nil {
+			slog.Error("write chunk to temp file", "path", c.Path, "index", c.ChunkIndex, "err", err)
+			return
+		}
 	}
 
 	t.Received[c.ChunkIndex] = true
@@ -507,6 +567,15 @@ func (tm *TransferManager) HandleFileResume(from string, req *FileResumeRequest)
 
 // sendFile chunks a tracked file and sends it to all peers.
 func (tm *TransferManager) sendFile(tf *TrackedFile) error {
+	if tm.cdcEnabled {
+		return tm.sendFileCDC(tf)
+	}
+	return tm.sendFileFixed(tf)
+}
+
+// sendFileFixed chunks a tracked file and sends it using fixed-size chunking.
+// This is the legacy path, retained for backward compatibility.
+func (tm *TransferManager) sendFileFixed(tf *TrackedFile) error {
 	cf, err := ChunkFile(tf.Path, tm.chunkSize)
 	if err != nil {
 		return fmt.Errorf("chunk %q: %w", tf.Path, err)
@@ -553,6 +622,108 @@ func (tm *TransferManager) sendFile(tf *TrackedFile) error {
 		tm.sendMsg("file_chunk", payload)
 	}
 
+	return nil
+}
+
+// sendFileCDC sends a file using content-defined chunking (CDC) with delta
+// sync. When the file has been sent before, unchanged chunks (matching cached
+// hashes) are skipped and the receiver is told which indices carry new data.
+func (tm *TransferManager) sendFileCDC(tf *TrackedFile) error {
+	relPath := tm.relativePath(tf.Path, tf.Tag)
+
+	// Chunk the file with CDC.
+	res, err := ChunkFileCDC(tf.Path, tm.cdcAvgSize)
+	if err != nil {
+		return fmt.Errorf("cdc chunk %q: %w", tf.Path, err)
+	}
+
+	// Bump the local vector clock.
+	tm.clockMu.Lock()
+	version := tm.clock.Increment(tm.nodeID)
+	tm.clockMu.Unlock()
+
+	// Delta sync: compare against cached chunk metas.
+	var deltaIndices []int
+
+	tm.cdcCacheMu.RLock()
+	cached, hasCached := tm.cdcCache[tf.Path]
+	tm.cdcCacheMu.RUnlock()
+
+	if hasCached && len(cached) == len(res.Meta) {
+		// Same number of chunks — compare hashes for delta sync.
+		for i := range res.Meta {
+			if i < len(cached) && cached[i].Hash != res.Meta[i].Hash {
+				deltaIndices = append(deltaIndices, i)
+			}
+		}
+		// If all chunks changed or almost all, it's not worth delta-syncing;
+		// fall back to full send.
+		if len(deltaIndices) > len(res.Meta)*3/4 {
+			deltaIndices = nil // send everything
+		}
+	}
+
+	// Build the announcement.
+	announce := &FileChangeAnnounce{
+		Path:         relPath,
+		Tag:          tf.Tag,
+		Size:         res.Size,
+		Hash:         res.Hash,
+		Version:      version,
+		NodeID:       tm.nodeID,
+		ChunkSize:    0, // signals CDC mode to new receivers
+		ChunkCount:   len(res.Meta),
+		ModTime:      tf.ModTime.UnixNano(),
+		Chunks:       res.Meta,
+		DeltaIndices: deltaIndices, // nil = send all, non-nil = send only these
+	}
+	tm.sendMsg("file_change", announce)
+
+	// Cache the metas for future delta sync.
+	tm.cdcCacheMu.Lock()
+	tm.cdcCache[tf.Path] = res.Meta
+	tm.cdcCacheMu.Unlock()
+
+	// Determine which chunks need data sent.
+	isDelta := len(deltaIndices) > 0
+
+	// Build a set for fast lookup.
+	var needSend map[int]bool
+	if isDelta {
+		needSend = make(map[int]bool, len(deltaIndices))
+		for _, idx := range deltaIndices {
+			needSend[idx] = true
+		}
+	}
+
+	ctx := context.Background()
+	for _, ch := range res.Chunks {
+		if isDelta && !needSend[ch.Index] {
+			continue // skip unchanged chunk
+		}
+		if tm.throttler != nil {
+			if err := tm.throttler.WaitN(ctx, len(ch.Data)); err != nil {
+				return fmt.Errorf("throttle interrupted: %w", err)
+			}
+		}
+		payload := &FileChunkPayload{
+			Path:       relPath,
+			ChunkIndex: ch.Index,
+			ChunkCount: len(res.Chunks),
+			Data:       base64.StdEncoding.EncodeToString(ch.Data),
+			Checksum:   ch.Hash,
+			Version:    version,
+		}
+		tm.sendMsg("file_chunk", payload)
+	}
+
+	slog.Debug("sent file via CDC",
+		"path", relPath,
+		"size", res.Size,
+		"chunks", len(res.Chunks),
+		"delta", isDelta,
+		"delta_count", len(deltaIndices),
+	)
 	return nil
 }
 

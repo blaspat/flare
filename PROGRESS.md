@@ -59,10 +59,10 @@
 - [x] Wrap WebSocket listener with crypto/tls
 - [x] Graceful fallback to plain WS
 
-### P4 — Content-Defined Chunking
-- [ ] Gear hash / Rabin fingerprint chunker
-- [ ] Delta sync (only transfer changed blocks)
-- [ ] Backward-compatible with current whole-file protocol
+### P4 — Content-Defined Chunking ✅ (2026-07-10)
+- [x] Gear hash / Rabin fingerprint chunker
+- [x] Delta sync (only transfer changed blocks)
+- [x] Backward-compatible with current whole-file protocol
 
 ### P4 — Encryption at Rest
 - [ ] AES-GCM encrypt synced files on disk
