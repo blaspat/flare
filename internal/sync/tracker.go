@@ -80,11 +80,12 @@ type WatchDir struct {
 //
 // The first scan returns every file as ChangeCreated.
 type FileTracker struct {
-	mu       sync.RWMutex
-	dirs     []WatchDir
-	files    map[string]*TrackedFile // absolute path → tracked file
-	version  uint64                  // global version counter
-	hashFunc func(io.Reader) (string, error)
+	mu          sync.RWMutex
+	dirs        []WatchDir
+	files       map[string]*TrackedFile      // absolute path → tracked file
+	version     uint64                       // global version counter
+	hashFunc    func(io.Reader) (string, error)
+	ignoreRules map[string]*IgnoreRules      // watch-dir path → rules
 }
 
 // HashFunc is the signature for hash functions passed to the option.
@@ -121,13 +122,20 @@ func NewFileTracker(dirs []WatchDir, opts ...Option) *FileTracker {
 	}
 
 	ft := &FileTracker{
-		dirs:     resolved,
-		files:    make(map[string]*TrackedFile),
-		hashFunc: sha256Hash,
+		dirs:        resolved,
+		files:       make(map[string]*TrackedFile),
+		hashFunc:    sha256Hash,
+		ignoreRules: make(map[string]*IgnoreRules, len(resolved)),
 	}
 	for _, o := range opts {
 		o(ft)
 	}
+
+	// Load .flareignore rules for each watch directory.
+	for _, d := range resolved {
+		ft.ignoreRules[d.Path] = LoadIgnoreForDir(d.Path)
+	}
+
 	return ft
 }
 
@@ -385,9 +393,20 @@ func walkDir(dir WatchDir, ft *FileTracker) (map[string]*TrackedFile, error) {
 		if err != nil {
 			return err // propagate
 		}
+
+		// Skip .flareignore meta-files.
+		if !d.IsDir() && d.Name() == ".flareignore" {
+			return nil
+		}
+
 		if d.IsDir() {
 			// Skip hidden directories (starting with .).
 			if d.Name()[0] == '.' && path != dir.Path {
+				return fs.SkipDir
+			}
+			// Skip directories matched by ignore rules.
+			rules := ft.ignoreRules[dir.Path]
+			if rules != nil && rules.Match(path, true) {
 				return fs.SkipDir
 			}
 			return nil
@@ -405,6 +424,12 @@ func walkDir(dir WatchDir, ft *FileTracker) (map[string]*TrackedFile, error) {
 		absPath, err := filepath.Abs(path)
 		if err != nil {
 			return fmt.Errorf("abs %q: %w", path, err)
+		}
+
+		// Skip files matched by ignore rules.
+		rules := ft.ignoreRules[dir.Path]
+		if rules != nil && rules.Match(absPath, false) {
+			return nil
 		}
 
 		tf, err := hashFile(absPath, info, dir.Tag, ft)
