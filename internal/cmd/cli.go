@@ -129,6 +129,12 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 
 	setLogLevel(cfg.Node.LogLevel, *verbose)
 
+	// Create optional encryption manager for at-rest encryption.
+	cryptoMgr := flaresync.NewCryptoManagerFromHex(cfg.EffectiveEncryptionKey())
+	if cryptoMgr.Enabled() {
+		slog.Info("encryption at rest enabled (AES-256-GCM)")
+	}
+
 	// Create hub and expose for status command
 	h := mesh.NewHub(func(p *mesh.PeerState) {})
 	hubMu.Lock()
@@ -212,7 +218,7 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 	}
 
 	// Create file tracker for sync.
-	tracker := flaresync.NewFileTracker(watchDirs)
+	tracker := flaresync.NewFileTracker(watchDirs, flaresync.WithCryptoManager(cryptoMgr))
 
 	// Create bandwidth throttler (nil = unlimited).
 	bandwidthLimit := cfg.EffectiveBandwidthLimit()
@@ -228,7 +234,7 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 	}
 
 	// Create transfer manager.
-	sm := flaresync.NewTransferManager(
+	tm := flaresync.NewTransferManager(
 		cfg.Node.Name,
 		cfg.Node.DataDir,
 		chunkSize,
@@ -237,8 +243,9 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 		watchDirs,
 		throttler,
 	)
+	tm.SetCryptoManager(cryptoMgr)
 	trMu.Lock()
-	tr = sm
+	tr = tm
 	trMu.Unlock()
 
 	// Create event-driven file watcher for near-instant change detection.
@@ -259,7 +266,7 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 			slog.Warn("decode file_change payload", "from", msg.From, "err", err)
 			return
 		}
-		sm.HandleFileChange(msg.From, payload)
+		tm.HandleFileChange(msg.From, payload)
 	})
 	h.HandleMessageType(mesh.MsgFileChunk, func(msg *mesh.Message, peer *mesh.PeerState) {
 		payload, err := mesh.DecodePayload[flaresync.FileChunkPayload](msg)
@@ -267,7 +274,7 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 			slog.Warn("decode file_chunk payload", "from", msg.From, "err", err)
 			return
 		}
-		sm.HandleFileChunk(msg.From, payload)
+		tm.HandleFileChunk(msg.From, payload)
 	})
 	h.HandleMessageType(mesh.MsgFileResume, func(msg *mesh.Message, peer *mesh.PeerState) {
 		payload, err := mesh.DecodePayload[flaresync.FileResumeRequest](msg)
@@ -275,7 +282,7 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 			slog.Warn("decode file_resume payload", "from", msg.From, "err", err)
 			return
 		}
-		sm.HandleFileResume(msg.From, payload)
+		tm.HandleFileResume(msg.From, payload)
 	})
 	h.HandleMessageType(mesh.MsgSyncRequest, func(msg *mesh.Message, peer *mesh.PeerState) {
 		payload, err := mesh.DecodePayload[flaresync.SyncRequestPayload](msg)
@@ -283,7 +290,7 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 			slog.Warn("decode sync_request payload", "from", msg.From, "err", err)
 			return
 		}
-		sm.HandleSyncRequest(msg.From, payload)
+		tm.HandleSyncRequest(msg.From, payload)
 	})
 	h.HandleMessageType(mesh.MsgSyncIndex, func(msg *mesh.Message, peer *mesh.PeerState) {
 		payload, err := mesh.DecodePayload[flaresync.SyncIndexPayload](msg)
@@ -291,7 +298,7 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 			slog.Warn("decode sync_index payload", "from", msg.From, "err", err)
 			return
 		}
-		requests := sm.HandleSyncIndex(msg.From, payload)
+		requests := tm.HandleSyncIndex(msg.From, payload)
 		if requests != nil {
 			sendMsg(h, cfg.Node.Name, peer.Name, mesh.MsgSyncRequest, requests)
 		}
@@ -299,7 +306,7 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 
 	// When a peer connects, send our full sync index so they can reconcile.
 	h.OnPeerConnected(func(name string) {
-		index := sm.BuildSyncIndex()
+		index := tm.BuildSyncIndex()
 		sendMsg(h, cfg.Node.Name, name, mesh.MsgSyncIndex, index)
 		slog.Debug("sent sync index to peer", "peer", name, "files", len(index.Files))
 	})
@@ -319,7 +326,7 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 	// with initial poll on startup.
 	go func() {
 		// Initial poll immediately (detects offline changes from loaded state).
-		if err := sm.Poll(); err != nil {
+		if err := tm.Poll(); err != nil {
 			slog.Warn("initial sync poll", "err", err)
 		}
 		// Save tracker state after initial poll.
@@ -340,7 +347,7 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 				}
 				return
 			case <-watcher.C():
-				if err := sm.Poll(); err != nil {
+				if err := tm.Poll(); err != nil {
 					slog.Warn("sync poll", "err", err)
 				}
 				// Save state after each poll to persist tombstones.
@@ -348,7 +355,7 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 					slog.Warn("save tracker state", "err", err)
 				}
 			case <-cleanupTicker.C:
-				cleaned := sm.CleanStaleTransfers(5 * time.Minute)
+				cleaned := tm.CleanStaleTransfers(5 * time.Minute)
 				if cleaned > 0 {
 					slog.Debug("cleaned stale transfers", "count", cleaned)
 				}
@@ -418,6 +425,13 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 	}
 
 	setLogLevel(cfg.Node.LogLevel, *verbose)
+
+	// Create optional encryption manager for at-rest encryption.
+	cryptoMgr := flaresync.NewCryptoManagerFromHex(cfg.EffectiveEncryptionKey())
+	if cryptoMgr.Enabled() {
+		slog.Info("encryption at rest enabled (AES-256-GCM)")
+	}
+
 	slog.Info("joining mesh", "name", cfg.Node.Name, "peer", addr)
 	// Show startup banner
 	fmt.Print(term.BannerASCII())
@@ -501,7 +515,7 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 	}
 
 	// Create file tracker and transfer manager.
-	tracker := flaresync.NewFileTracker(watchDirs)
+	tracker := flaresync.NewFileTracker(watchDirs, flaresync.WithCryptoManager(cryptoMgr))
 	bandwidthLimit := cfg.EffectiveBandwidthLimit()
 	bandwidthBurst := cfg.EffectiveBandwidthBurst()
 	var throttler *flaresync.Throttler
@@ -513,7 +527,7 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 	} else {
 		slog.Debug("bandwidth throttling disabled (unlimited)")
 	}
-	sm := flaresync.NewTransferManager(
+	tm := flaresync.NewTransferManager(
 		cfg.Node.Name,
 		cfg.Node.DataDir,
 		chunkSize,
@@ -522,6 +536,7 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 		watchDirs,
 		throttler,
 	)
+	tm.SetCryptoManager(cryptoMgr)
 
 	// Register sync message handlers.
 	h.HandleMessageType(mesh.MsgFileChange, func(msg *mesh.Message, peer *mesh.PeerState) {
@@ -530,7 +545,7 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 			slog.Warn("decode file_change payload", "from", msg.From, "err", err)
 			return
 		}
-		sm.HandleFileChange(msg.From, payload)
+		tm.HandleFileChange(msg.From, payload)
 	})
 	h.HandleMessageType(mesh.MsgFileChunk, func(msg *mesh.Message, peer *mesh.PeerState) {
 		payload, err := mesh.DecodePayload[flaresync.FileChunkPayload](msg)
@@ -538,7 +553,7 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 			slog.Warn("decode file_chunk payload", "from", msg.From, "err", err)
 			return
 		}
-		sm.HandleFileChunk(msg.From, payload)
+		tm.HandleFileChunk(msg.From, payload)
 	})
 	h.HandleMessageType(mesh.MsgFileResume, func(msg *mesh.Message, peer *mesh.PeerState) {
 		payload, err := mesh.DecodePayload[flaresync.FileResumeRequest](msg)
@@ -546,7 +561,7 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 			slog.Warn("decode file_resume payload", "from", msg.From, "err", err)
 			return
 		}
-		sm.HandleFileResume(msg.From, payload)
+		tm.HandleFileResume(msg.From, payload)
 	})
 	h.HandleMessageType(mesh.MsgSyncRequest, func(msg *mesh.Message, peer *mesh.PeerState) {
 		payload, err := mesh.DecodePayload[flaresync.SyncRequestPayload](msg)
@@ -554,7 +569,7 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 			slog.Warn("decode sync_request payload", "from", msg.From, "err", err)
 			return
 		}
-		sm.HandleSyncRequest(msg.From, payload)
+		tm.HandleSyncRequest(msg.From, payload)
 	})
 	h.HandleMessageType(mesh.MsgSyncIndex, func(msg *mesh.Message, peer *mesh.PeerState) {
 		payload, err := mesh.DecodePayload[flaresync.SyncIndexPayload](msg)
@@ -562,7 +577,7 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 			slog.Warn("decode sync_index payload", "from", msg.From, "err", err)
 			return
 		}
-		requests := sm.HandleSyncIndex(msg.From, payload)
+		requests := tm.HandleSyncIndex(msg.From, payload)
 		if requests != nil {
 			sendMsg(h, cfg.Node.Name, peer.Name, mesh.MsgSyncRequest, requests)
 		}
@@ -570,7 +585,7 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 
 	// When a peer connects, send our full sync index.
 	h.OnPeerConnected(func(name string) {
-		index := sm.BuildSyncIndex()
+		index := tm.BuildSyncIndex()
 		sendMsg(h, cfg.Node.Name, name, mesh.MsgSyncIndex, index)
 		slog.Debug("sent sync index to peer", "peer", name, "files", len(index.Files))
 	})
@@ -595,7 +610,7 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 		defer pollTicker.Stop()
 
 		// Initial poll immediately (detects offline changes from loaded state).
-		if err := sm.Poll(); err != nil {
+		if err := tm.Poll(); err != nil {
 			slog.Warn("initial sync poll", "err", err)
 		}
 		if err := tracker.Save(syncStatePath); err != nil {
@@ -613,14 +628,14 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 				}
 				return
 			case <-pollTicker.C:
-				if err := sm.Poll(); err != nil {
+				if err := tm.Poll(); err != nil {
 					slog.Warn("sync poll", "err", err)
 				}
 				if err := tracker.Save(syncStatePath); err != nil {
 					slog.Warn("save tracker state", "err", err)
 				}
 			case <-cleanupTicker.C:
-				cleaned := sm.CleanStaleTransfers(5 * time.Minute)
+				cleaned := tm.CleanStaleTransfers(5 * time.Minute)
 				if cleaned > 0 {
 					slog.Debug("cleaned stale transfers", "count", cleaned)
 				}

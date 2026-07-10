@@ -2,6 +2,7 @@
 package sync
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -235,7 +236,8 @@ func (c *CDCChunker) findBoundary(data []byte) int {
 
 // ChunkFileCDC reads a regular file from disk and returns its CDC chunks with
 // full metadata. avgSize is the target average chunk size (see NewCDCChunker).
-func ChunkFileCDC(path string, avgSize int) (*CDCResult, error) {
+// When cm is non-nil and enabled, the file is transparently decrypted first.
+func ChunkFileCDC(path string, avgSize int, cm *CryptoManager) (*CDCResult, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("stat %q: %w", path, err)
@@ -244,13 +246,24 @@ func ChunkFileCDC(path string, avgSize int) (*CDCResult, error) {
 		return nil, fmt.Errorf("not a regular file: %q", path)
 	}
 
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open %q: %w", path, err)
+	// Determine the reader to use: decrypted content or raw file.
+	var rd io.Reader
+	if cm != nil && cm.Enabled() {
+		plain, err := cm.ReadDecryptedWithFallback(path)
+		if err != nil {
+			return nil, fmt.Errorf("read/decrypt %q: %w", path, err)
+		}
+		rd = bytes.NewReader(plain)
+	} else {
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, fmt.Errorf("open %q: %w", path, err)
+		}
+		defer f.Close()
+		rd = f
 	}
-	defer f.Close()
 
-	chunker := NewCDCChunker(f, avgSize)
+	chunker := NewCDCChunker(rd, avgSize)
 	var chunks []CDCChunkResult
 	var metas []CDCChunkMeta
 

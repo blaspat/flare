@@ -58,7 +58,7 @@ func TestChunkFile_ExactChunks(t *testing.T) {
 	content := testContent(128 * 1024) // 128 KB
 	path := writeTestFile(t, dir, "exact.dat", content)
 
-	cf, err := ChunkFile(path, 64*1024)
+	cf, err := ChunkFile(path, 64*1024, nil)
 	if err != nil {
 		t.Fatalf("ChunkFile failed: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestChunkFile_PartialLastChunk(t *testing.T) {
 	content := testContent(100000) // 100 KB, not evenly divisible by 64 KB
 	path := writeTestFile(t, dir, "partial.dat", content)
 
-	cf, err := ChunkFile(path, 64*1024)
+	cf, err := ChunkFile(path, 64*1024, nil)
 	if err != nil {
 		t.Fatalf("ChunkFile failed: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestChunkFile_EmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	path := writeTestFile(t, dir, "empty.dat", []byte{})
 
-	cf, err := ChunkFile(path, 64*1024)
+	cf, err := ChunkFile(path, 64*1024, nil)
 	if err != nil {
 		t.Fatalf("ChunkFile failed: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestChunkFile_SingleByte(t *testing.T) {
 	content := []byte{'A'}
 	path := writeTestFile(t, dir, "single.dat", content)
 
-	cf, err := ChunkFile(path, 64*1024)
+	cf, err := ChunkFile(path, 64*1024, nil)
 	if err != nil {
 		t.Fatalf("ChunkFile failed: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestChunkFile_SingleByte(t *testing.T) {
 }
 
 func TestChunkFile_NotExists(t *testing.T) {
-	_, err := ChunkFile("/nonexistent/path.dat", 64*1024)
+	_, err := ChunkFile("/nonexistent/path.dat", 64*1024, nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent file")
 	}

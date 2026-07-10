@@ -273,7 +273,7 @@ func TestChunkFileCDC_ProducesCorrectResult(t *testing.T) {
 	content := randomContent(100000)
 	path := writeTestFile(t, dir, "cdc_test.dat", content)
 
-	res, err := ChunkFileCDC(path, 65536)
+	res, err := ChunkFileCDC(path, 65536, nil)
 	if err != nil {
 		t.Fatalf("ChunkFileCDC failed: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestChunkFileCDC_EmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	path := writeTestFile(t, dir, "empty_cdc.dat", []byte{})
 
-	res, err := ChunkFileCDC(path, 65536)
+	res, err := ChunkFileCDC(path, 65536, nil)
 	if err != nil {
 		t.Fatalf("ChunkFileCDC failed on empty file: %v", err)
 	}
@@ -353,7 +353,7 @@ func TestChunkFileCDC_LargeFile_SumMatches(t *testing.T) {
 	content := randomContent(5 * 1024 * 1024) // 5 MB
 	path := writeTestFile(t, dir, "large_cdc.dat", content)
 
-	res, err := ChunkFileCDC(path, 65536)
+	res, err := ChunkFileCDC(path, 65536, nil)
 	if err != nil {
 		t.Fatalf("ChunkFileCDC failed: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestChunkFileCDC_LargeFile_SumMatches(t *testing.T) {
 }
 
 func TestChunkFileCDC_NotExists(t *testing.T) {
-	_, err := ChunkFileCDC("/nonexistent/cdc_path.dat", 65536)
+	_, err := ChunkFileCDC("/nonexistent/cdc_path.dat", 65536, nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent file")
 	}
@@ -407,7 +407,7 @@ func TestCDCTransfer_EndToEnd(t *testing.T) {
 		}, nil)
 
 	// Chunk the file with CDC.
-	res, err := ChunkFileCDC(writeTestFile(t, dir, "source.dat", content), 65536)
+	res, err := ChunkFileCDC(writeTestFile(t, dir, "source.dat", content), 65536, nil)
 	if err != nil {
 		t.Fatalf("ChunkFileCDC failed: %v", err)
 	}
@@ -471,7 +471,7 @@ func TestCDCTransfer_OutOfOrderChunks(t *testing.T) {
 			{Path: watchDir, Tag: "default"},
 		}, nil)
 
-	res, err := ChunkFileCDC(writeTestFile(t, dir, "source_ooo.dat", content), 65536)
+	res, err := ChunkFileCDC(writeTestFile(t, dir, "source_ooo.dat", content), 65536, nil)
 	if err != nil {
 		t.Fatalf("ChunkFileCDC failed: %v", err)
 	}
@@ -542,7 +542,7 @@ func TestCDCTransfer_ConflictWithExistingFile(t *testing.T) {
 			{Path: watchDir, Tag: "default"},
 		}, nil)
 
-	res, err := ChunkFileCDC(writeTestFile(t, dir, "incoming.dat", incomingContent), 65536)
+	res, err := ChunkFileCDC(writeTestFile(t, dir, "incoming.dat", incomingContent), 65536, nil)
 	if err != nil {
 		t.Fatalf("ChunkFileCDC failed: %v", err)
 	}

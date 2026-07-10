@@ -3,6 +3,7 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -116,13 +117,23 @@ type ChunkedFile struct {
 
 // ChunkFile reads a file from disk, splits it into chunks of the given size,
 // and returns a ChunkedFile with all metadata.
-func ChunkFile(path string, chunkSize int) (*ChunkedFile, error) {
+// When cm is non-nil and enabled, the file is transparently decrypted first.
+func ChunkFile(path string, chunkSize int, cm *CryptoManager) (*ChunkedFile, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("stat %q: %w", path, err)
 	}
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("not a regular file: %q", path)
+	}
+
+	// When encryption is enabled, read and decrypt first, then chunk from memory.
+	if cm != nil && cm.Enabled() {
+		plain, err := cm.ReadDecryptedWithFallback(path)
+		if err != nil {
+			return nil, fmt.Errorf("read/decrypt %q: %w", path, err)
+		}
+		return chunkFromBytes(path, plain, chunkSize, info.ModTime()), nil
 	}
 
 	f, err := os.Open(path)
@@ -179,6 +190,60 @@ func ChunkFile(path string, chunkSize int) (*ChunkedFile, error) {
 		Chunks:    chunks,
 		ModTime:   info.ModTime(),
 	}, nil
+}
+
+// chunkFromBytes is an internal helper that chunks plaintext data without
+// reading from disk. Used when encryption is enabled and we've already
+// decrypted the file content.
+func chunkFromBytes(path string, data []byte, chunkSize int, modTime time.Time) *ChunkedFile {
+	h := sha256.New()
+	r := bytes.NewReader(data)
+	tee := io.TeeReader(r, h)
+
+	var chunks []FileChunk
+	buf := make([]byte, chunkSize)
+	index := 0
+	for {
+		n, err := tee.Read(buf)
+		if n > 0 {
+			chunkData := make([]byte, n)
+			copy(chunkData, buf[:n])
+			ch := sha256.Sum256(chunkData)
+			chunks = append(chunks, FileChunk{
+				Index: index,
+				Data:  chunkData,
+				Hash:  hex.EncodeToString(ch[:]),
+			})
+			index++
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			// Should not happen with a bytes.Reader.
+			break
+		}
+	}
+
+	if len(chunks) == 0 {
+		ch := sha256.Sum256(nil)
+		chunks = append(chunks, FileChunk{
+			Index: 0,
+			Data:  []byte{},
+			Hash:  hex.EncodeToString(ch[:]),
+		})
+	}
+
+	fullHash := hex.EncodeToString(h.Sum(nil))
+
+	return &ChunkedFile{
+		Path:      path,
+		Hash:      fullHash,
+		Size:      int64(len(data)),
+		ChunkSize: chunkSize,
+		Chunks:    chunks,
+		ModTime:   modTime,
+	}
 }
 
 // --- IncomingTransfer ------------------------------------------------------
@@ -304,6 +369,8 @@ type TransferManager struct {
 	cdcAvgSize int                      // average CDC chunk size (default: chunkSize)
 	cdcCache   map[string][]CDCChunkMeta // last-known CDC chunk index per absolute path
 	cdcCacheMu sync.RWMutex
+
+	cryptoMgr *CryptoManager // nil = encryption disabled
 }
 
 // NewTransferManager creates a transfer manager.
@@ -340,6 +407,12 @@ func NewTransferManager(
 		cdcAvgSize: chunkSize, // match existing chunk size for consistency
 		cdcCache:   make(map[string][]CDCChunkMeta),
 	}
+}
+
+// SetCryptoManager configures transparent encryption/decryption for files
+// written to and read from disk. Pass nil to disable (default).
+func (tm *TransferManager) SetCryptoManager(cm *CryptoManager) {
+	tm.cryptoMgr = cm
 }
 
 // Poll scans all watched directories and broadcasts any changes to all peers.
@@ -535,7 +608,7 @@ func (tm *TransferManager) HandleFileResume(from string, req *FileResumeRequest)
 	if absPath == "" {
 		absPath = req.Path
 	}
-	cf, err := ChunkFile(absPath, tm.chunkSize)
+	cf, err := ChunkFile(absPath, tm.chunkSize, tm.cryptoMgr)
 	if err != nil {
 		slog.Warn("resume: cannot read file", "path", req.Path, "err", err)
 		return
@@ -576,7 +649,7 @@ func (tm *TransferManager) sendFile(tf *TrackedFile) error {
 // sendFileFixed chunks a tracked file and sends it using fixed-size chunking.
 // This is the legacy path, retained for backward compatibility.
 func (tm *TransferManager) sendFileFixed(tf *TrackedFile) error {
-	cf, err := ChunkFile(tf.Path, tm.chunkSize)
+	cf, err := ChunkFile(tf.Path, tm.chunkSize, tm.cryptoMgr)
 	if err != nil {
 		return fmt.Errorf("chunk %q: %w", tf.Path, err)
 	}
@@ -632,7 +705,7 @@ func (tm *TransferManager) sendFileCDC(tf *TrackedFile) error {
 	relPath := tm.relativePath(tf.Path, tf.Tag)
 
 	// Chunk the file with CDC.
-	res, err := ChunkFileCDC(tf.Path, tm.cdcAvgSize)
+	res, err := ChunkFileCDC(tf.Path, tm.cdcAvgSize, tm.cryptoMgr)
 	if err != nil {
 		return fmt.Errorf("cdc chunk %q: %w", tf.Path, err)
 	}
@@ -790,7 +863,7 @@ func (tm *TransferManager) finalizeTransfer(t *IncomingTransfer) {
 	// If the destination file already exists with different content, rename it
 	// to a conflict path before writing the incoming version.
 	if existingInfo, statErr := os.Stat(t.AbsPath); statErr == nil && existingInfo.Mode().IsRegular() {
-		existingHash, hashErr := hashFileContent(t.AbsPath)
+		existingHash, hashErr := hashFileContent(t.AbsPath, tm.cryptoMgr)
 		if hashErr != nil {
 			slog.Warn("conflict check: cannot hash existing file, overwriting anyway",
 				"path", t.Path, "err", hashErr)
@@ -827,8 +900,23 @@ func (tm *TransferManager) finalizeTransfer(t *IncomingTransfer) {
 		}
 	}
 
-	// Move temp file to final location.
-	if err := os.Rename(t.tempFile.Name(), t.AbsPath); err != nil {
+	// Move temp file to final location, optionally encrypting.
+	if tm.cryptoMgr != nil && tm.cryptoMgr.Enabled() {
+		// Read plaintext from temp, encrypt, write to destination.
+		if _, err := t.tempFile.Seek(0, io.SeekStart); err != nil {
+			slog.Error("seek temp for encryption", "path", t.Path, "err", err)
+			return
+		}
+		plain, err := io.ReadAll(t.tempFile)
+		if err != nil {
+			slog.Error("read temp for encryption", "path", t.Path, "err", err)
+			return
+		}
+		if err := tm.cryptoMgr.WriteEncrypted(t.AbsPath, plain); err != nil {
+			slog.Error("write encrypted file", "path", t.AbsPath, "err", err)
+			return
+		}
+	} else if err := os.Rename(t.tempFile.Name(), t.AbsPath); err != nil {
 		// Fallback: copy and delete.
 		src, err := os.Open(t.tempFile.Name())
 		if err != nil {
@@ -1028,7 +1116,16 @@ func (tm *TransferManager) addConflict(r ConflictRecord) {
 }
 
 // hashFileContent reads a file and returns its SHA-256 hex digest.
-func hashFileContent(absPath string) (string, error) {
+// When cm is non-nil and enabled, the file is transparently decrypted first.
+func hashFileContent(absPath string, cm *CryptoManager) (string, error) {
+	if cm != nil && cm.Enabled() {
+		plain, err := cm.ReadDecryptedWithFallback(absPath)
+		if err != nil {
+			return "", err
+		}
+		h := sha256.Sum256(plain)
+		return hex.EncodeToString(h[:]), nil
+	}
 	f, err := os.Open(absPath)
 	if err != nil {
 		return "", err

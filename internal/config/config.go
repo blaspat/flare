@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -17,12 +18,14 @@ type Config struct {
 }
 
 type NodeConfig struct {
-	Name     string `toml:"name"`
-	Listen   string `toml:"listen"`
-	DataDir  string `toml:"data_dir"`
-	LogLevel string `toml:"log_level"`
-	TLSCert  string `toml:"tls_cert"`
-	TLSKey   string `toml:"tls_key"`
+	Name           string `toml:"name"`
+	Listen         string `toml:"listen"`
+	DataDir        string `toml:"data_dir"`
+	LogLevel       string `toml:"log_level"`
+	TLSCert        string `toml:"tls_cert"`
+	TLSKey         string `toml:"tls_key"`
+	EncryptionKey  string `toml:"encryption_key"`  // hex-encoded 32-byte AES-256 key (empty = disabled)
+	EncryptionFile string `toml:"encryption_key_file"` // path to file with hex key (alternative to inline)
 }
 // MeshConfig defines mesh networking parameters.
 type MeshConfig struct {
@@ -150,6 +153,28 @@ func (c *Config) EffectiveCircuitBreakerLimit() int {
 		return 0
 	}
 	return c.Mesh.CircuitBreakerLimit
+}
+
+// EffectiveEncryptionKey returns the AES-256 key, checking sources in order:
+//  1. NodeConfig.EncryptionKey (inline hex in config)
+//  2. NodeConfig.EncryptionFile (path to file containing hex key)
+//  3. FLARE_ENCRYPTION_KEY env var
+//
+// Returns empty string if no key is configured (encryption disabled).
+func (c *Config) EffectiveEncryptionKey() string {
+	if c.Node.EncryptionKey != "" {
+		return c.Node.EncryptionKey
+	}
+	if c.Node.EncryptionFile != "" {
+		data, err := os.ReadFile(c.Node.EncryptionFile)
+		if err == nil {
+			return strings.TrimSpace(string(data))
+		}
+	}
+	if env := os.Getenv("FLARE_ENCRYPTION_KEY"); env != "" {
+		return env
+	}
+	return ""
 }
 
 // EffectiveBandwidthLimit returns BandwidthLimit (bytes/sec), defaulting to 0 (unlimited).

@@ -4,6 +4,7 @@
 package sync
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -86,6 +87,7 @@ type FileTracker struct {
 	version     uint64                       // global version counter
 	hashFunc    func(io.Reader) (string, error)
 	ignoreRules map[string]*IgnoreRules      // watch-dir path → rules
+	cryptoMgr   *CryptoManager               // nil = encryption disabled
 }
 
 // HashFunc is the signature for hash functions passed to the option.
@@ -98,6 +100,15 @@ type Option func(*FileTracker)
 func WithHashFunc(fn HashFunc) Option {
 	return func(ft *FileTracker) {
 		ft.hashFunc = fn
+	}
+}
+
+// WithCryptoManager enables transparent decryption when reading files for
+// hashing. Pass a CryptoManager created with the configured encryption key,
+// or nil to leave encryption disabled.
+func WithCryptoManager(cm *CryptoManager) Option {
+	return func(ft *FileTracker) {
+		ft.cryptoMgr = cm
 	}
 }
 
@@ -449,6 +460,8 @@ func walkDir(dir WatchDir, ft *FileTracker) (map[string]*TrackedFile, error) {
 // hashFile reads the file, computes its hash, and returns a TrackedFile.
 // The Version field is left at 0 — the caller sets it.
 // If ft is non-nil, the configured hash function is used; otherwise SHA-256.
+// When ft.cryptoMgr is enabled, the file is decrypted before hashing
+// (files on disk are encrypted at rest).
 func hashFile(absPath string, info os.FileInfo, tag string, ft *FileTracker) (*TrackedFile, error) {
 	if info == nil {
 		var err error
@@ -470,18 +483,33 @@ func hashFile(absPath string, info os.FileInfo, tag string, ft *FileTracker) (*T
 		return tf, nil
 	}
 
-	f, err := os.Open(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("open %q: %w", absPath, err)
-	}
-	defer f.Close()
-
 	var hashFn HashFunc
 	if ft != nil && ft.hashFunc != nil {
 		hashFn = ft.hashFunc
 	} else {
 		hashFn = sha256Hash
 	}
+
+	// When encryption is enabled, read and decrypt first, then hash.
+	if ft != nil && ft.cryptoMgr != nil && ft.cryptoMgr.Enabled() {
+		plain, err := ft.cryptoMgr.ReadDecryptedWithFallback(absPath)
+		if err != nil {
+			return nil, fmt.Errorf("read/decrypt %q: %w", absPath, err)
+		}
+		tf.Size = int64(len(plain))
+		h, err := hashFn(bytes.NewReader(plain))
+		if err != nil {
+			return nil, fmt.Errorf("hash %q: %w", absPath, err)
+		}
+		tf.Hash = h
+		return tf, nil
+	}
+
+	f, err := os.Open(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("open %q: %w", absPath, err)
+	}
+	defer f.Close()
 
 	h, err := hashFn(f)
 	if err != nil {

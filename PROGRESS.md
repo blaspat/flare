@@ -64,10 +64,11 @@
 - [x] Delta sync (only transfer changed blocks)
 - [x] Backward-compatible with current whole-file protocol
 
-### P4 — Encryption at Rest
-- [ ] AES-GCM encrypt synced files on disk
-- [ ] Key management via config/env
-- [ ] Transparent decrypt on read
+### P4 — Encryption at Rest ✅ (2026-07-10)
+- [x] AES-GCM encrypt synced files on disk
+- [x] Key management via config/env (inline hex, key file, env var)
+- [x] Transparent decrypt on read (ReadDecryptedWithFallback for legacy files)
+- [x] Full test suite in crypt_test.go (23 tests)
 
 ### P5 — NAT Traversal
 - [ ] STUN client for public address discovery
