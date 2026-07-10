@@ -22,11 +22,14 @@ type NodeConfig struct {
 	DataDir  string `toml:"data_dir"`
 	LogLevel string `toml:"log_level"`
 }
-
+// MeshConfig defines mesh networking parameters.
 type MeshConfig struct {
-	Peers             []string      `toml:"peers"`
-	Discovery         string        `toml:"discovery"`
-	ReconnectInterval time.Duration `toml:"reconnect_interval"`
+	Peers              []string      `toml:"peers"`
+	Discovery          string        `toml:"discovery"`
+	ReconnectInterval  time.Duration `toml:"reconnect_interval"` // used as BackoffMin fallback (deprecated)
+	BackoffMin         time.Duration `toml:"backoff_min"`        // initial backoff (default: 1s)
+	BackoffMax         time.Duration `toml:"backoff_max"`        // max backoff (default: 60s)
+	CircuitBreakerLimit int          `toml:"circuit_breaker_limit"` // consecutive failures before circuit opens (0=disabled, default: 10)
 }
 
 type SyncConfig struct {
@@ -62,9 +65,12 @@ func Default() *Config {
 			LogLevel: "info",
 		},
 		Mesh: MeshConfig{
-			Peers:             []string{},
-			Discovery:         "mdns",
-			ReconnectInterval: 10 * time.Second,
+			Peers:               []string{},
+			Discovery:           "mdns",
+			ReconnectInterval:   10 * time.Second,
+			BackoffMin:          1 * time.Second,
+			BackoffMax:          60 * time.Second,
+			CircuitBreakerLimit: 10,
 		},
 		Sync: SyncConfig{
 			WatchDirs:   []WatchDir{},
@@ -112,4 +118,32 @@ func (c *Config) ResolvePaths() error {
 		c.Node.DataDir = abs
 	}
 	return nil
+}
+
+// EffectiveBackoffMin returns BackoffMin, falling back to ReconnectInterval
+// for backward compatibility, then to 1s.
+func (c *Config) EffectiveBackoffMin() time.Duration {
+	if c.Mesh.BackoffMin > 0 {
+		return c.Mesh.BackoffMin
+	}
+	if c.Mesh.ReconnectInterval > 0 {
+		return c.Mesh.ReconnectInterval
+	}
+	return time.Second
+}
+
+// EffectiveBackoffMax returns BackoffMax, falling back to 60s.
+func (c *Config) EffectiveBackoffMax() time.Duration {
+	if c.Mesh.BackoffMax > 0 {
+		return c.Mesh.BackoffMax
+	}
+	return 60 * time.Second
+}
+
+// EffectiveCircuitBreakerLimit returns CircuitBreakerLimit, falling back to 10 (0 = disabled).
+func (c *Config) EffectiveCircuitBreakerLimit() int {
+	if c.Mesh.CircuitBreakerLimit < 0 {
+		return 0
+	}
+	return c.Mesh.CircuitBreakerLimit
 }

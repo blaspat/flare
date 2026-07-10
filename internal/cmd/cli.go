@@ -186,7 +186,12 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 	elector.Elect(h.ListNames())
 
 	// Create reconnect manager for automatic peer reconnection
-	rm := mesh.NewReconnectManager(h, cfg.Node.Name, cfg.Mesh.ReconnectInterval)
+	rm := mesh.NewReconnectManager(h, cfg.Node.Name, mesh.BackoffConfig{
+		Min:    cfg.EffectiveBackoffMin(),
+		Max:    cfg.EffectiveBackoffMax(),
+		Factor: 2.0,
+		Jitter: 0.25,
+	}, cfg.EffectiveCircuitBreakerLimit())
 	h.SetReconnectManager(rm)
 	defer rm.Stop()
 
@@ -460,7 +465,12 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 	elector.Elect(h.ListNames())
 
 	// Create reconnect manager for automatic peer reconnection
-	rm := mesh.NewReconnectManager(h, cfg.Node.Name, cfg.Mesh.ReconnectInterval)
+	rm := mesh.NewReconnectManager(h, cfg.Node.Name, mesh.BackoffConfig{
+		Min:    cfg.EffectiveBackoffMin(),
+		Max:    cfg.EffectiveBackoffMax(),
+		Factor: 2.0,
+		Jitter: 0.25,
+	}, cfg.EffectiveCircuitBreakerLimit())
 	h.SetReconnectManager(rm)
 	defer rm.Stop()
 

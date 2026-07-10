@@ -44,10 +44,10 @@
 - [x] Fall back to polling when not available
 - [x] Integration with FileTracker.Scan (via DirWatcher → TransferManager.Poll)
 
-### P3 — Peer Discovery Backoff
-- [ ] Exponential backoff + jitter on reconnect
-- [ ] Configurable min/max delay
-- [ ] Circuit breaker after N consecutive failures
+### P3 — Peer Discovery Backoff ✅ (2026-07-10)
+- [x] Exponential backoff + jitter on reconnect
+- [x] Configurable min/max delay
+- [x] Circuit breaker after N consecutive failures
 
 ### P4 — Bandwidth Throttling
 - [ ] Token bucket rate limiter for transfers

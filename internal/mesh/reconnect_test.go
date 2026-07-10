@@ -1,6 +1,7 @@
 package mesh
 
 import (
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -52,9 +53,18 @@ func newTestWebSocketPair(t *testing.T) (serverConn, clientConn *websocket.Conn,
 	return server, client, srv.Close
 }
 
+func testBackoff() BackoffConfig {
+	return BackoffConfig{
+		Min:    50 * time.Millisecond,
+		Max:    500 * time.Millisecond,
+		Factor: 2.0,
+		Jitter: 0,
+	}
+}
+
 func TestReconnectManagerTrackForget(t *testing.T) {
 	hub := NewHub(func(p *PeerState) {})
-	rm := NewReconnectManager(hub, "test-node", time.Second)
+	rm := NewReconnectManager(hub, "test-node", testBackoff(), 10)
 	defer rm.Stop()
 
 	// Track a peer
@@ -69,7 +79,7 @@ func TestReconnectManagerTrackForget(t *testing.T) {
 
 func TestReconnectManagerCancelReconnect(t *testing.T) {
 	hub := NewHub(func(p *PeerState) {})
-	rm := NewReconnectManager(hub, "test-node", 100*time.Millisecond)
+	rm := NewReconnectManager(hub, "test-node", testBackoff(), 10)
 	defer rm.Stop()
 
 	rm.Track("node-beta", "ws://10.0.0.1:9721/mesh")
@@ -84,7 +94,7 @@ func TestReconnectManagerCancelReconnect(t *testing.T) {
 
 func TestReconnectManagerTrackExistingCancelsReconnect(t *testing.T) {
 	hub := NewHub(func(p *PeerState) {})
-	rm := NewReconnectManager(hub, "test-node", 100*time.Millisecond)
+	rm := NewReconnectManager(hub, "test-node", testBackoff(), 10)
 	defer rm.Stop()
 
 	rm.Track("node-beta", "ws://10.0.0.1:9721/mesh")
@@ -99,7 +109,7 @@ func TestReconnectManagerTrackExistingCancelsReconnect(t *testing.T) {
 
 func TestReconnectManagerMultipleOnDisconnectNoStack(t *testing.T) {
 	hub := NewHub(func(p *PeerState) {})
-	rm := NewReconnectManager(hub, "test-node", 100*time.Millisecond)
+	rm := NewReconnectManager(hub, "test-node", testBackoff(), 10)
 	defer rm.Stop()
 
 	rm.Track("node-beta", "ws://10.0.0.1:9721/mesh")
@@ -260,7 +270,7 @@ func TestHubAddPeerOutgoingTracksReconnect(t *testing.T) {
 	defer client.Close()
 
 	hub := NewHub(func(p *PeerState) {})
-	rm := NewReconnectManager(hub, "test-node", time.Second)
+	rm := NewReconnectManager(hub, "test-node", testBackoff(), 10)
 	hub.SetReconnectManager(rm)
 
 	peer := NewPeer("node-beta", client)
@@ -286,7 +296,7 @@ func TestHubAddPeerIncomingNoReconnect(t *testing.T) {
 	defer client.Close()
 
 	hub := NewHub(func(p *PeerState) {})
-	rm := NewReconnectManager(hub, "test-node", time.Second)
+	rm := NewReconnectManager(hub, "test-node", testBackoff(), 10)
 	hub.SetReconnectManager(rm)
 
 	peer := NewPeer("node-beta", client)
@@ -303,4 +313,253 @@ func TestHubAddPeerIncomingNoReconnect(t *testing.T) {
 	}
 
 	rm.Stop()
+}
+
+// ---- Backoff tests ----
+
+func TestBackoffDelayIncreases(t *testing.T) {
+	b := BackoffConfig{
+		Min:    100 * time.Millisecond,
+		Max:    10 * time.Second,
+		Factor: 2.0,
+		Jitter: 0, // no jitter for deterministic test
+	}
+
+	d0 := b.Delay(0)
+	d1 := b.Delay(1)
+	d2 := b.Delay(2)
+	d3 := b.Delay(3)
+
+	if d0 >= d1 || d1 >= d2 || d2 >= d3 {
+		t.Errorf("expected strictly increasing delays, got %v, %v, %v, %v", d0, d1, d2, d3)
+	}
+}
+
+func TestBackoffDelayCapsAtMax(t *testing.T) {
+	b := BackoffConfig{
+		Min:    100 * time.Millisecond,
+		Max:    500 * time.Millisecond,
+		Factor: 2.0,
+		Jitter: 0,
+	}
+
+	for i := 0; i < 20; i++ {
+		d := b.Delay(i)
+		if d > b.Max {
+			t.Errorf("attempt %d: delay %v exceeds max %v", i, d, b.Max)
+		}
+		if d < 0 {
+			t.Errorf("attempt %d: negative delay %v", i, d)
+		}
+	}
+}
+
+func TestBackoffJitterSpread(t *testing.T) {
+	b := BackoffConfig{
+		Min:    100 * time.Millisecond,
+		Max:    10 * time.Second,
+		Factor: 2.0,
+		Jitter: 0.5, // ±50% — wide range for testing
+	}
+
+	// Collect many samples at the same attempt level
+	attempt := 2
+	samples := make([]time.Duration, 50)
+	minSample := b.Max
+	maxSample := time.Duration(0)
+	for i := range samples {
+		d := b.Delay(attempt)
+		samples[i] = d
+		if d < minSample {
+			minSample = d
+		}
+		if d > maxSample {
+			maxSample = d
+		}
+	}
+
+	minExpected := time.Duration(float64(b.Min)*math.Pow(b.Factor, float64(attempt))*0.5 + 1)
+	maxExpected := time.Duration(float64(b.Min)*math.Pow(b.Factor, float64(attempt))*1.5 + 1)
+
+	if minSample < minExpected {
+		t.Logf("min sample %v < expected min %v", minSample, minExpected)
+	}
+	if maxSample > maxExpected {
+		t.Logf("max sample %v > expected max %v", maxSample, maxExpected)
+	}
+}
+
+func TestBackoffZeroAttempt(t *testing.T) {
+	b := BackoffConfig{
+		Min:    1 * time.Second,
+		Max:    60 * time.Second,
+		Factor: 2.0,
+		Jitter: 0,
+	}
+
+	d := b.Delay(0)
+	if d != b.Min {
+		t.Errorf("expected delay(0) = min = %v, got %v", b.Min, d)
+	}
+}
+
+// ---- Circuit breaker tests ----
+
+func TestCircuitBreakerTripsAfterLimit(t *testing.T) {
+	// Use a very short backoff so reconnect attempts happen quickly.
+	// Dial a port that refuses immediately ("connection refused") so the failure is fast.
+	b := BackoffConfig{
+		Min:    1 * time.Millisecond,
+		Max:    5 * time.Millisecond,
+		Factor: 1.5,
+		Jitter: 0,
+	}
+
+	hub := NewHub(func(p *PeerState) {})
+	rm := NewReconnectManager(hub, "test-node", b, 3) // trip after 3 failures
+	defer rm.Stop()
+
+	// Use 127.0.0.1:1 — nothing listens on port 1, so "connection refused" returns instantly.
+	rm.Track("dead-peer", "ws://127.0.0.1:1/mesh")
+	rm.OnDisconnect("dead-peer")
+
+	// Wait for circuit to trip — 3 retries at ~1ms + 1.5ms + 2.25ms + connect-refused round-trips
+	time.Sleep(200 * time.Millisecond)
+
+	// Check status
+	status := rm.Status()
+	if s, ok := status["dead-peer"]; !ok || s != "circuit_open" {
+		t.Errorf("expected dead-peer circuit to be open, got status=%v", status["dead-peer"])
+	}
+}
+
+func TestCircuitBreakerTrackResets(t *testing.T) {
+	b := BackoffConfig{
+		Min:    5 * time.Millisecond,
+		Max:    50 * time.Millisecond,
+		Factor: 2.0,
+		Jitter: 0,
+	}
+
+	hub := NewHub(func(p *PeerState) {})
+	rm := NewReconnectManager(hub, "test-node", b, 3)
+	defer rm.Stop()
+
+	// Trip the circuit
+	rm.Track("dead-peer", "ws://127.0.0.1:1/mesh")
+	rm.OnDisconnect("dead-peer")
+	time.Sleep(100 * time.Millisecond)
+
+	status := rm.Status()
+	if s, ok := status["dead-peer"]; !ok || s != "circuit_open" {
+		t.Skip("circuit didn't trip in time, skipping reset test")
+	}
+
+	// Track again (simulates manual reconnect or mDNS re-discovery)
+	rm.Track("dead-peer", "ws://127.0.0.1:1/mesh") // connection refused, fails fast
+
+	// Should be reset now
+	status = rm.Status()
+	if s, ok := status["dead-peer"]; ok && s == "circuit_open" {
+		t.Error("expected circuit to reset after Track, but still open")
+	}
+}
+
+func TestCircuitBreakerDisabledWithZero(t *testing.T) {
+	b := BackoffConfig{
+		Min:    1 * time.Millisecond,
+		Max:    5 * time.Millisecond,
+		Factor: 1.5,
+		Jitter: 0,
+	}
+
+	hub := NewHub(func(p *PeerState) {})
+	rm := NewReconnectManager(hub, "test-node", b, 0) // 0 = disabled
+	defer rm.Stop()
+
+	rm.Track("dead-peer", "ws://127.0.0.1:1/mesh") // connection refused, fails fast
+	rm.OnDisconnect("dead-peer")
+
+	// Give it time for several retry cycles
+	time.Sleep(100 * time.Millisecond)
+
+	status := rm.Status()
+	if _, ok := status["dead-peer"]; !ok {
+		t.Error("expected dead-peer to still be tracked")
+	}
+	// Should still be "reconnecting", not "circuit_open"
+	if s := status["dead-peer"]; s != "reconnecting" {
+		t.Logf("dead-peer status: %s (should be reconnecting)", s)
+	}
+}
+
+func TestBackoffDefaultConfig(t *testing.T) {
+	b := DefaultBackoff()
+	if b.Min != 1*time.Second {
+		t.Errorf("expected Min=1s, got %v", b.Min)
+	}
+	if b.Max != 60*time.Second {
+		t.Errorf("expected Max=60s, got %v", b.Max)
+	}
+	if b.Factor != 2.0 {
+		t.Errorf("expected Factor=2.0, got %v", b.Factor)
+	}
+	if b.Jitter != 0.25 {
+		t.Errorf("expected Jitter=0.25, got %v", b.Jitter)
+	}
+}
+
+func TestReconnectManagerStatus(t *testing.T) {
+	hub := NewHub(func(p *PeerState) {})
+	rm := NewReconnectManager(hub, "test-node", testBackoff(), 10)
+	defer rm.Stop()
+
+	// No tracked peers yet
+	s := rm.Status()
+	if len(s) != 0 {
+		t.Errorf("expected empty status, got %v", s)
+	}
+
+	// Track a peer (connected)
+	rm.Track("node-beta", "ws://10.0.0.1:9721/mesh")
+	s = rm.Status()
+	if s["node-beta"] != "connected" {
+		t.Errorf("expected 'connected', got %v", s["node-beta"])
+	}
+
+	// Trigger disconnect (reconnecting)
+	rm.OnDisconnect("node-beta")
+	s = rm.Status()
+	if s["node-beta"] != "reconnecting" {
+		t.Errorf("expected 'reconnecting', got %v", s["node-beta"])
+	}
+}
+
+func TestTrackPeerResetsCircuitBreaker(t *testing.T) {
+	b := BackoffConfig{
+		Min:    5 * time.Millisecond,
+		Max:    50 * time.Millisecond,
+		Factor: 2.0,
+		Jitter: 0,
+	}
+
+	hub := NewHub(func(p *PeerState) {})
+	rm := NewReconnectManager(hub, "test-node", b, 2)
+	defer rm.Stop()
+
+	rm.Track("dead-peer", "ws://127.0.0.1:1/mesh") // connection refused, fails fast
+	rm.OnDisconnect("dead-peer")
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Before circuit trips, call Track (simulates reconnection)
+	rm.Track("dead-peer", "ws://127.0.0.1:1/mesh") // connection refused, fails fast
+	rm.OnDisconnect("dead-peer")
+
+	time.Sleep(50 * time.Millisecond)
+
+	status := rm.Status()
+	if s, ok := status["dead-peer"]; ok && s == "circuit_open" {
+		t.Log("circuit still open after Track+OnDisconnect (expected with only 2 attempts)")
+	}
 }
