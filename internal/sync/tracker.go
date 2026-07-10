@@ -46,13 +46,15 @@ func (ct ChangeType) String() string {
 
 // TrackedFile holds the metadata snapshot for a single tracked file.
 type TrackedFile struct {
-	Path    string    `json:"path"`    // absolute path
-	Tag     string    `json:"tag"`     // watch-dir tag from config
-	Size    int64     `json:"size"`    // file size in bytes
-	ModTime time.Time `json:"mod_time"` // modification time (wall clock)
-	Hash    string    `json:"hash"`    // hex-encoded SHA-256
-	Version uint64    `json:"version"` // monotonic version for causal ordering
-	Deleted bool      `json:"deleted"` // true when the file no longer exists
+	Path       string            `json:"path"`        // absolute path
+	Tag        string            `json:"tag"`         // watch-dir tag from config
+	Size       int64             `json:"size"`        // file size in bytes
+	ModTime    time.Time         `json:"mod_time"`    // modification time (wall clock)
+	Hash       string            `json:"hash"`        // hex-encoded SHA-256
+	Version    uint64            `json:"version"`     // monotonic version for causal ordering
+	Deleted    bool              `json:"deleted"`     // true when the file no longer exists
+	Clock      map[string]uint64 `json:"clock,omitempty"`  // vector clock snapshot for LWW merge
+	LastWriter string            `json:"last_writer,omitempty"` // node that last wrote this file
 }
 
 // --- ChangeEvent -----------------------------------------------------------
@@ -292,6 +294,18 @@ func (ft *FileTracker) GetByTagAndPath(tag, relPath string) *TrackedFile {
 	}
 	c := *tf
 	return &c
+}
+
+// SetFileClock updates the vector clock and last-writer info for a tracked file.
+// This is called after a remote file change is accepted, so the tracker reflects
+// the latest causal state. If the file is not tracked, the call is a no-op.
+func (ft *FileTracker) SetFileClock(absPath, lastWriter string, clock map[string]uint64) {
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if tf, ok := ft.files[absPath]; ok {
+		tf.Clock = clock
+		tf.LastWriter = lastWriter
+	}
 }
 
 // Reset clears all tracked state. The next scan will report every file as

@@ -31,6 +31,9 @@ import (
 // nil the receiver uses the traditional fixed-size mode (ChunkSize-based
 // offset writes). Old clients that don't know about Chunks ignore the field
 // via JSON omitempty and continue using the fixed-size path.
+//
+// The optional Clock field enables LWW CRDT-style merge: when present, the
+// receiver compares it against its local vector clock to decide causality.
 type FileChangeAnnounce struct {
 	Path       string         `json:"path"`        // relative path within the watch tag
 	Tag        string         `json:"tag"`         // watch-dir tag
@@ -47,7 +50,8 @@ type FileChangeAnnounce struct {
 	// list carry new data; the remaining chunks are unchanged and the receiver
 	// may reconstruct them from its local copy. When nil or empty, all chunks
 	// carry data (full transfer).
-	DeltaIndices []int `json:"delta,omitempty"`
+	DeltaIndices []int           `json:"delta,omitempty"`
+	Clock        map[string]uint64 `json:"clock,omitempty"` // vector clock snapshot for LWW merge
 }
 
 // FileChunkPayload carries one chunk of file data.
@@ -72,12 +76,14 @@ type FileResumeRequest struct {
 
 // SyncIndexEntry describes one file in a node's sync index.
 type SyncIndexEntry struct {
-	Path    string `json:"path"`     // relative path within the watch tag
-	Tag     string `json:"tag"`      // watch-dir tag
-	Size    int64  `json:"size"`     // -1 if deleted
-	Hash    string `json:"hash"`     // empty if deleted
-	Version uint64 `json:"version"`  // tracker version (global monotonic)
-	ModTime int64  `json:"mod_time"` // unix-nano (0 if deleted)
+	Path       string            `json:"path"`        // relative path within the watch tag
+	Tag        string            `json:"tag"`         // watch-dir tag
+	Size       int64             `json:"size"`        // -1 if deleted
+	Hash       string            `json:"hash"`        // empty if deleted
+	Version    uint64            `json:"version"`     // tracker version (global monotonic)
+	ModTime    int64             `json:"mod_time"`    // unix-nano (0 if deleted)
+	NodeID     string            `json:"node_id,omitempty"`  // originating node (for LWW)
+	Clock      map[string]uint64 `json:"clock,omitempty"`    // vector clock snapshot (for LWW)
 }
 
 // SyncIndexPayload is exchanged when a new peer connects.
@@ -272,6 +278,11 @@ type IncomingTransfer struct {
 	// deltaIndices restricts expected data to only the listed indices when
 	// non-nil (delta sync).
 	deltaIndices []int
+
+	// Clock carries the sender's vector clock snapshot from the announcement.
+	// It is propagated to the tracker on finalizeTransfer for LWW merge.
+	Clock      map[string]uint64
+	FromNodeID string // node that sent the announcement (may differ from NodeID)
 }
 
 // IncomingTransferStore manages active incoming transfers.
@@ -493,6 +504,52 @@ func (tm *TransferManager) HandleFileChange(from string, a *FileChangeAnnounce) 
 		return
 	}
 
+	// --- LWW merge: compare vector clocks to determine causality ---
+	// When the sender includes a vector clock, compare it against our local
+	// tracked file's clock to decide whether this change should be accepted.
+	// This enables CRDT-style Last-Writer-Wins merge for concurrent edits.
+	if a.Clock != nil {
+		localFile := tm.tracker.GetByTagAndPath(a.Tag, a.Path)
+		if localFile != nil && !localFile.Deleted && localFile.Clock != nil {
+			// If hashes match, content is identical — skip regardless of clock.
+			if localFile.Hash == a.Hash {
+				slog.Debug("LWW: file content identical, skipping",
+					"path", a.Path, "from", from)
+				return
+			}
+
+			incomingClock := FromMap(a.Clock)
+			localClock := FromMap(localFile.Clock)
+			rel := incomingClock.Compare(localClock)
+
+			var shouldAccept bool
+			switch rel {
+			case HappenedAfter:
+				shouldAccept = true // incoming is causally newer
+			case HappenedBefore:
+				shouldAccept = false // local is causally newer
+			case Concurrent:
+				// LWW tiebreaker: lexicographically lower node ID wins.
+				shouldAccept = a.NodeID < localFile.LastWriter
+			}
+
+			if !shouldAccept {
+				slog.Debug("LWW: rejected file change (local version wins)",
+					"path", a.Path, "from", from,
+					"relation", rel,
+					"incoming_node", a.NodeID,
+					"local_last_writer", localFile.LastWriter)
+				return
+			}
+
+			slog.Debug("LWW: accepted file change",
+				"path", a.Path, "from", from,
+				"relation", rel,
+				"incoming_node", a.NodeID,
+				"local_last_writer", localFile.LastWriter)
+		}
+	}
+
 	isCDC := len(a.Chunks) > 0
 
 	// Create temp file for assembly.
@@ -530,6 +587,8 @@ func (tm *TransferManager) HandleFileChange(from string, a *FileChangeAnnounce) 
 		tempFile:     tmpFile,
 		cdcChunks:    a.Chunks,
 		deltaIndices: a.DeltaIndices,
+		Clock:        a.Clock,
+		FromNodeID:   from,
 	}
 	tm.incoming.Set(t)
 
@@ -657,10 +716,14 @@ func (tm *TransferManager) sendFileFixed(tf *TrackedFile) error {
 	// Determine the relative path within the watch tag.
 	relPath := tm.relativePath(tf.Path, tf.Tag)
 
-	// Bump the local vector clock.
+	// Bump the local vector clock and snapshot.
 	tm.clockMu.Lock()
 	version := tm.clock.Increment(tm.nodeID)
+	clockSnap := tm.clock.All()
 	tm.clockMu.Unlock()
+
+	// Update the tracker's clock info so the file's causal state is persisted.
+	tm.tracker.SetFileClock(tf.Path, tm.nodeID, clockSnap)
 
 	// Send the announcement.
 	announce := &FileChangeAnnounce{
@@ -673,6 +736,7 @@ func (tm *TransferManager) sendFileFixed(tf *TrackedFile) error {
 		ChunkSize:  tm.chunkSize,
 		ChunkCount: len(cf.Chunks),
 		ModTime:    cf.ModTime.UnixNano(),
+		Clock:      clockSnap,
 	}
 	tm.sendMsg("file_change", announce)
 
@@ -710,10 +774,14 @@ func (tm *TransferManager) sendFileCDC(tf *TrackedFile) error {
 		return fmt.Errorf("cdc chunk %q: %w", tf.Path, err)
 	}
 
-	// Bump the local vector clock.
+	// Bump the local vector clock and snapshot.
 	tm.clockMu.Lock()
 	version := tm.clock.Increment(tm.nodeID)
+	clockSnap := tm.clock.All()
 	tm.clockMu.Unlock()
+
+	// Update the tracker's clock info for LWW merge.
+	tm.tracker.SetFileClock(tf.Path, tm.nodeID, clockSnap)
 
 	// Delta sync: compare against cached chunk metas.
 	var deltaIndices []int
@@ -749,6 +817,7 @@ func (tm *TransferManager) sendFileCDC(tf *TrackedFile) error {
 		ModTime:      tf.ModTime.UnixNano(),
 		Chunks:       res.Meta,
 		DeltaIndices: deltaIndices, // nil = send all, non-nil = send only these
+		Clock:        clockSnap,
 	}
 	tm.sendMsg("file_change", announce)
 
@@ -805,7 +874,11 @@ func (tm *TransferManager) sendDelete(path, tag string) {
 	relPath := tm.relativePath(path, tag)
 	tm.clockMu.Lock()
 	version := tm.clock.Increment(tm.nodeID)
+	clockSnap := tm.clock.All()
 	tm.clockMu.Unlock()
+
+	// Update tracker clock for the deleted file.
+	tm.tracker.SetFileClock(path, tm.nodeID, clockSnap)
 
 	announce := &FileChangeAnnounce{
 		Path:    relPath,
@@ -814,6 +887,7 @@ func (tm *TransferManager) sendDelete(path, tag string) {
 		Hash:    "",
 		Version: version,
 		NodeID:  tm.nodeID,
+		Clock:   clockSnap,
 	}
 	tm.sendMsg("file_change", announce)
 }
@@ -938,6 +1012,11 @@ func (tm *TransferManager) finalizeTransfer(t *IncomingTransfer) {
 		}
 	}
 
+	// Propagate the vector clock to the tracker for LWW merge state.
+	if t.Clock != nil && t.AbsPath != "" {
+		tm.tracker.SetFileClock(t.AbsPath, t.FromNodeID, t.Clock)
+	}
+
 	slog.Info("file transfer complete", "path", t.Path, "size", t.Size)
 }
 
@@ -1004,6 +1083,7 @@ func (tm *TransferManager) relativePath(absPath, tag string) string {
 
 // BuildSyncIndex builds the full file index from the tracker's current state.
 // Non-deleted files carry their hash/size/modtime; deleted files have Size=-1.
+// When available, vector clock info is included for LWW merge reconciliation.
 func (tm *TransferManager) BuildSyncIndex() *SyncIndexPayload {
 	snap := tm.tracker.Snapshot()
 	entries := make([]SyncIndexEntry, 0, len(snap))
@@ -1012,6 +1092,8 @@ func (tm *TransferManager) BuildSyncIndex() *SyncIndexPayload {
 			Path:    tm.relativePath(tf.Path, tf.Tag),
 			Tag:     tf.Tag,
 			Version: tf.Version,
+			NodeID:  tf.LastWriter,
+			Clock:   tf.Clock,
 		}
 		if tf.Deleted {
 			entry.Size = -1
@@ -1059,12 +1141,35 @@ func (tm *TransferManager) HandleSyncIndex(from string, index *SyncIndexPayload)
 			continue
 		}
 
-		// Both have the file. Take the newer version (tie-break by modtime).
-		if entry.Version > local.Version || (entry.Version == local.Version && entry.ModTime > local.ModTime.UnixNano()) {
-			// Peer has a newer version (or same version but newer mtime).
-			// Only request if the content differs.
-			if entry.Hash != local.Hash {
+		// Both have the file. Use vector clock comparison when available.
+		if local.Clock != nil && entry.Clock != nil {
+			// LWW via vector clocks.
+			localVC := FromMap(local.Clock)
+			entryVC := FromMap(entry.Clock)
+			rel := entryVC.Compare(localVC)
+
+			var peerWins bool
+			switch rel {
+			case HappenedAfter:
+				peerWins = true // peer is causally ahead
+			case HappenedBefore:
+				peerWins = false // we are causally ahead
+			case Concurrent:
+				// LWW tiebreaker: lower node ID wins.
+				peerWins = entry.NodeID < local.LastWriter
+			}
+
+			if peerWins && entry.Hash != local.Hash {
 				requests = append(requests, SyncRequestEntry{Path: entry.Path, Tag: entry.Tag})
+			}
+		} else {
+			// Fall back to version + modtime comparison (backward compatible).
+			if entry.Version > local.Version || (entry.Version == local.Version && entry.ModTime > local.ModTime.UnixNano()) {
+				// Peer has a newer version (or same version but newer mtime).
+				// Only request if the content differs.
+				if entry.Hash != local.Hash {
+					requests = append(requests, SyncRequestEntry{Path: entry.Path, Tag: entry.Tag})
+				}
 			}
 		}
 	}

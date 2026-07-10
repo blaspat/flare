@@ -80,7 +80,7 @@
 - [x] Missed-job catch-up on leader election
 - [x] Configurable job retry policy
 
-### P5 — CRDT-Style Merge
-- [ ] Last-writer-wins for concurrent file edits
-- [ ] Version vector reconciliation
-- [ ] Merge conflict reporting
+### P5 — CRDT-Style Merge ✅ (2026-07-10)
+- [x] Last-writer-wins for concurrent file edits
+- [x] Version vector reconciliation
+- [x] Merge conflict reporting

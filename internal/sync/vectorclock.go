@@ -176,6 +176,18 @@ func (vc *VectorClock) String() string {
 	return sb.String()
 }
 
+// FromMap creates a VectorClock from a map of node IDs to counters.
+// The returned clock is independent of the input map (deep copied).
+func FromMap(entries map[string]uint64) *VectorClock {
+	vc := NewVectorClock()
+	vc.mu.Lock()
+	for k, v := range entries {
+		vc.clocks[k] = v
+	}
+	vc.mu.Unlock()
+	return vc
+}
+
 // snapshot returns a copy of the current clock entries under a read lock.
 func (vc *VectorClock) snapshot() map[string]uint64 {
 	vc.mu.RLock()
