@@ -7,9 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,6 +64,8 @@ func ParseAndRun(ctx context.Context, args []string) error {
 		return statusCmd(ctx, cfgPath, args[2:])
 	case "run":
 		return runCmd(ctx, cfgPath, args[2:])
+	case "dashboard":
+		return dashboardCmd(cfgPath)
 	case "init":
 		return initCmd(ctx, args[2:])
 	case "help", "--help", "-h":
@@ -80,13 +84,14 @@ func printUsage() error {
    Edge Mesh Server` + term.Reset + term.Dim + `  v0.1.0` + term.Reset + `
 
 ` + term.Bold + `Usage:` + term.Reset + `
-  ` + term.Green + `flare start` + term.Reset + `              Start the mesh node (server mode)
-  ` + term.Green + `flare start -d` + term.Reset + `           Start in background (daemon)
-  ` + term.Green + `flare join` + term.Reset + ` <addr>        Join an existing mesh at address
-  ` + term.Green + `flare status` + term.Reset + `             Show node and mesh status
-  ` + term.Green + `flare run` + term.Reset + ` <job-name>     Run a cron job immediately
-  ` + term.Green + `flare init` + term.Reset + `               Generate a config file interactively
-  ` + term.Green + `flare help` + term.Reset + `               Show this help
+ ` + term.Green + `flare start` + term.Reset + `              Start the mesh node (server mode)
+ ` + term.Green + `flare start -d` + term.Reset + `           Start in background (daemon)
+ ` + term.Green + `flare join` + term.Reset + ` <addr>        Join an existing mesh at address
+ ` + term.Green + `flare status` + term.Reset + `             Show node and mesh status
+ ` + term.Green + `flare dashboard` + term.Reset + `          Open the web dashboard in browser
+ ` + term.Green + `flare run` + term.Reset + ` <job-name>     Run a cron job immediately
+ ` + term.Green + `flare init` + term.Reset + `               Generate a config file interactively
+ ` + term.Green + `flare help` + term.Reset + `               Show this help
 
 ` + term.Dim + `Config: FLARE_CONFIG env or ./flare.toml` + term.Reset + `
 `)
@@ -863,6 +868,43 @@ func runCmd(ctx context.Context, cfgPath string, args []string) error {
 		return fmt.Errorf("job %q failed: %w\noutput: %s", found.Name, err, string(output))
 	}
 	fmt.Printf("%s\n", string(output))
+	return nil
+}
+
+// dashboardCmd opens the web dashboard in the browser.
+func dashboardCmd(cfgPath string) error {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	if cfg.Node.WebPort <= 0 {
+		fmt.Println(term.Yellow + "Dashboard is disabled." + term.Reset)
+		fmt.Println("  Set " + term.Bold + "web_port" + term.Reset + " in your config to enable it (e.g. " + term.Bold + "web_port = 9722" + term.Reset + ")")
+		return nil
+	}
+
+	// Determine the dashboard URL.
+	// Use the listen address if it's not wildcard, otherwise fall back to localhost.
+	host := "127.0.0.1"
+	if cfg.Node.Listen != "" {
+		listenHost, _, err := net.SplitHostPort(cfg.Node.Listen)
+		if err == nil && listenHost != "" && listenHost != "0.0.0.0" && listenHost != "::" {
+			host = listenHost
+		}
+	}
+	dashURL := fmt.Sprintf("http://%s:%d", host, cfg.Node.WebPort)
+
+	fmt.Printf("  %sDashboard: %s%s%s\n", term.Bold+term.Cyan, term.Reset, term.Bold+dashURL+term.Reset, "")
+	fmt.Printf("  %s%sPress Ctrl+C to stop the server.%s\n", term.Dim, "The dashboard is only available while the Flare node is running.", term.Reset)
+
+	// Try to open the browser if this is a local session (has a display).
+	if runtime.GOOS == "darwin" {
+		_ = exec.Command("open", dashURL).Start()
+	} else if os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "" {
+		_ = exec.Command("xdg-open", dashURL).Start()
+	}
+
 	return nil
 }
 

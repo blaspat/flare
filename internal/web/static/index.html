@@ -75,6 +75,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 16px;
+    position: relative;
   }
   .card h2 {
     font-size: 0.85rem;
@@ -117,6 +118,21 @@
     color: var(--dim);
     font-weight: 500;
     border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+  }
+  thead th:hover {
+    color: var(--text);
+    background: rgba(255,255,255,0.03);
+  }
+  thead th .sort-arrow {
+    display: inline-block;
+    margin-left: 4px;
+    opacity: 0.4;
+  }
+  thead th.sorted .sort-arrow {
+    opacity: 1;
+    color: var(--blue);
   }
   tbody td {
     padding: 6px 8px;
@@ -150,6 +166,77 @@
     padding: 40px;
     color: var(--dim);
   }
+  /* Spinner */
+  .spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border);
+    border-top-color: var(--blue);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  .loading .spinner {
+    display: block;
+    margin: 0 auto 12px auto;
+    width: 28px;
+    height: 28px;
+    border-width: 3px;
+  }
+  /* Error state */
+  .error-state {
+    text-align: center;
+    padding: 24px;
+    color: var(--red);
+  }
+  .error-state .err-icon {
+    font-size: 1.5rem;
+    margin-bottom: 8px;
+    display: block;
+  }
+  .error-state button {
+    margin-top: 12px;
+    background: var(--card);
+    color: var(--blue);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 16px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .error-state button:hover {
+    background: rgba(88,166,255,0.1);
+    border-color: var(--blue);
+  }
+  /* Filter input */
+  .filter-input {
+    width: 100%;
+    padding: 6px 10px;
+    font-size: 0.8rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+  .filter-input:focus {
+    outline: none;
+    border-color: var(--blue);
+  }
+  .filter-input::placeholder {
+    color: var(--dim);
+  }
+  /* Reconnect counter */
+  .reconnect-msg {
+    font-size: 0.75rem;
+    color: var(--dim);
+    margin-left: 6px;
+  }
   @media (max-width: 600px) {
     body { padding: 12px; }
     .grid { grid-template-columns: 1fr; }
@@ -164,28 +251,30 @@
   <span class="conn-badge" id="connBadge">
     <span class="dot" id="connDot"></span>
     <span id="connStatus">connecting…</span>
+    <span class="reconnect-msg" id="reconnectMsg" style="display:none"></span>
   </span>
 </div>
 
 <div class="grid">
   <div class="card">
     <h2>Node</h2>
-    <div id="nodeStats"></div>
+    <div id="nodeStats"><div class="loading"><span class="spinner"></span>waiting for data…</div></div>
   </div>
   <div class="card">
     <h2>Peers</h2>
-    <div id="peersContent"><div class="loading">waiting for data…</div></div>
+    <input type="text" class="filter-input" id="peerFilter" placeholder="Filter peers…" style="display:none">
+    <div id="peersContent"><div class="loading"><span class="spinner"></span>waiting for data…</div></div>
   </div>
 </div>
 
 <div class="grid">
   <div class="card">
     <h2>Sync</h2>
-    <div id="syncContent"><div class="loading">waiting for data…</div></div>
+    <div id="syncContent"><div class="loading"><span class="spinner"></span>waiting for data…</div></div>
   </div>
   <div class="card">
     <h2>Cron</h2>
-    <div id="cronContent"><div class="loading">waiting for data…</div></div>
+    <div id="cronContent"><div class="loading"><span class="spinner"></span>waiting for data…</div></div>
   </div>
 </div>
 
@@ -198,13 +287,21 @@
 // --- state ---
 let ws = null;
 let reconnectTimer = null;
+let reconnectCount = 0;
+const RECONNECT_LIMIT = 5;
+let peerData = [];
+let sortCol = null;
+let sortAsc = true;
+let filterText = '';
 
 // --- DOM refs ---
 const nodeNameEl = document.getElementById('nodeName');
 const connDot = document.getElementById('connDot');
 const connStatus = document.getElementById('connStatus');
+const reconnectMsg = document.getElementById('reconnectMsg');
 const nodeStats = document.getElementById('nodeStats');
 const peersContent = document.getElementById('peersContent');
+const peerFilter = document.getElementById('peerFilter');
 const syncContent = document.getElementById('syncContent');
 const cronContent = document.getElementById('cronContent');
 const eventLog = document.getElementById('eventLog');
@@ -245,6 +342,34 @@ function badge(text, cls) {
   return `<span class="badge ${cls}">${esc(text)}</span>`;
 }
 
+// Set a card to loading state
+function setLoading(el) {
+  el.innerHTML = '<div class="loading"><span class="spinner"></span>waiting for data…</div>';
+}
+
+// Set a card to error state
+function setError(el, msg) {
+  const errMsg = msg || 'Failed to load data.';
+  el.innerHTML = `<div class="error-state"><span class="err-icon">⚠️</span>${esc(errMsg)}<br><button onclick="fetchREST()">Try REST API</button></div>`;
+}
+
+// --- REST API fallback ---
+function fetchREST() {
+  setConnStatus(true, 'polling REST API');
+  showAllLoading();
+  fetch('/api/status').then(r => r.json()).then(d => renderStatus(d)).catch(() => setError(nodeStats, 'API unavailable'));
+  fetch('/api/peers').then(r => r.json()).then(d => renderPeers(d.peers || [])).catch(() => {});
+  fetch('/api/sync').then(r => r.json()).then(d => renderSync(d)).catch(() => {});
+  fetch('/api/cron').then(r => r.json()).then(d => renderCron(d)).catch(() => {});
+}
+
+function showAllLoading() {
+  setLoading(nodeStats);
+  setLoading(peersContent);
+  setLoading(syncContent);
+  setLoading(cronContent);
+}
+
 // --- render functions ---
 function renderStatus(data) {
   nodeNameEl.textContent = data.node_name || '—';
@@ -273,19 +398,80 @@ function fmtUptime(s) {
   return parts.join(' ');
 }
 
+// --- Sort/filter peers ---
 function renderPeers(peers) {
-  if (!peers || peers.length === 0) {
-    peersContent.innerHTML = '<div class="empty">No peers connected.</div>';
+  peerData = peers || [];
+  updatePeersView();
+}
+
+function updatePeersView() {
+  let filtered = peerData;
+  // Apply filter
+  if (filterText) {
+    const ft = filterText.toLowerCase();
+    filtered = filtered.filter(p =>
+      (p.name && p.name.toLowerCase().includes(ft)) ||
+      (p.addr && p.addr.toLowerCase().includes(ft)) ||
+      (p.alive ? 'alive' : 'dead').includes(ft) ||
+      (p.connected || '').toLowerCase().includes(ft)
+    );
+  }
+  // Apply sort
+  if (sortCol !== null) {
+    filtered = [...filtered].sort((a, b) => {
+      let va = '', vb = '';
+      if (sortCol === 'name') { va = a.name||''; vb = b.name||''; }
+      else if (sortCol === 'addr') { va = a.addr||''; vb = b.addr||''; }
+      else if (sortCol === 'connected') { va = a.connected||''; vb = b.connected||''; }
+      else if (sortCol === 'status') { va = a.alive ? 'alive' : 'dead'; vb = b.alive ? 'alive' : 'dead'; }
+      const cmp = va.localeCompare(vb);
+      return sortAsc ? cmp : -cmp;
+    });
+  }
+
+  // Show/hide filter input based on data
+  peerFilter.style.display = peerData.length > 3 ? 'block' : 'none';
+
+  if (filtered.length === 0) {
+    const msg = peerData.length > 0 ? `No peers match "${esc(filterText)}".` : 'No peers connected.';
+    peersContent.innerHTML = `<div class="empty">${msg}</div>`;
     return;
   }
-  let html = `<table><thead><tr><th>Name</th><th>Address</th><th>Connected</th><th>Status</th></tr></thead><tbody>`;
-  for (const p of peers) {
+
+  const sortArrow = (col) => {
+    if (sortCol === col) return sortAsc ? ' ▲' : ' ▼';
+    return '';
+  };
+
+  let html = `<table><thead><tr>
+    <th onclick="sortPeers('name')" class="${sortCol==='name'?'sorted':''}">Name<span class="sort-arrow">${sortArrow('name')}</span></th>
+    <th onclick="sortPeers('addr')" class="${sortCol==='addr'?'sorted':''}">Address<span class="sort-arrow">${sortArrow('addr')}</span></th>
+    <th onclick="sortPeers('connected')" class="${sortCol==='connected'?'sorted':''}">Connected<span class="sort-arrow">${sortArrow('connected')}</span></th>
+    <th onclick="sortPeers('status')" class="${sortCol==='status'?'sorted':''}">Status<span class="sort-arrow">${sortArrow('status')}</span></th>
+  </tr></thead><tbody>`;
+  for (const p of filtered) {
     const alive = p.alive ? badge('alive', 'green') : badge('dead', 'red');
     html += `<tr><td>${esc(p.name)}</td><td>${esc(p.addr)}</td><td>${esc(p.connected||'')}</td><td>${alive}</td></tr>`;
   }
   html += `</tbody></table>`;
   peersContent.innerHTML = html;
 }
+
+function sortPeers(col) {
+  if (sortCol === col) {
+    sortAsc = !sortAsc;
+  } else {
+    sortCol = col;
+    sortAsc = true;
+  }
+  updatePeersView();
+}
+
+// Filter input handler
+peerFilter.addEventListener('input', function() {
+  filterText = this.value;
+  updatePeersView();
+});
 
 function renderSync(data) {
   if (!data) { syncContent.innerHTML = '<div class="empty">No sync data.</div>'; return; }
@@ -358,13 +544,18 @@ function connectWS() {
     return;
   }
 
-  ws.onopen = () => setConnStatus(true, 'connected');
+  ws.onopen = () => {
+    reconnectCount = 0;
+    setConnStatus(true, 'connected');
+    reconnectMsg.style.display = 'none';
+  };
   ws.onclose = () => {
     setConnStatus(false, 'disconnected');
     ws = null;
     scheduleReconnect();
   };
   ws.onerror = () => {
+    // onclose fires after onerror, so just update badge here
     setConnStatus(false, 'error');
   };
   ws.onmessage = (evt) => {
@@ -383,6 +574,27 @@ function setConnStatus(connected, text) {
 }
 
 function scheduleReconnect() {
+  reconnectCount++;
+  if (reconnectCount > 1) {
+    const msg = reconnectCount >= RECONNECT_LIMIT
+      ? `(${reconnectCount} attempts — no connection)`
+      : `(retry ${reconnectCount}/${RECONNECT_LIMIT})`;
+    reconnectMsg.textContent = msg;
+    reconnectMsg.style.display = 'inline';
+  }
+
+  if (reconnectCount >= RECONNECT_LIMIT) {
+    // Show error states after sustained failure
+    setError(nodeStats, 'WebSocket connection lost — using REST API polling');
+    setError(peersContent, 'No connection');
+    setError(syncContent, 'No connection');
+    setError(cronContent, 'No connection');
+    setConnStatus(false, 'offline — click to retry');
+    connBadge.style.cursor = 'pointer';
+    connBadge.onclick = () => { connBadge.style.cursor = ''; connBadge.onclick = null; connectWS(); };
+    return;
+  }
+
   if (reconnectTimer) return;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
@@ -412,7 +624,6 @@ function handleWSMessage(msg) {
       log('cron', `Cron job "${esc(msg.data.name)}" ${status} on ${esc(msg.data.node)}`);
       break;
     default:
-      // ignore unknown event types
       break;
   }
 }

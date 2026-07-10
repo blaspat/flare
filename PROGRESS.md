@@ -101,7 +101,7 @@
 - [x] `style.css` — clean dark theme, responsive layout (embedded in index.html) (2026-07-10)
 
 ### P3 — Polish
-- [ ] Loading/error/empty states
+- [x] Loading/error/empty states (2026-07-11)
 - [x] Auto-reconnect WebSocket on disconnect (2026-07-10)
-- [ ] Sort/filter peers table
-- [ ] CLI `flare dashboard` command to open browser
+- [x] Sort/filter peers table (2026-07-11)
+- [x] CLI `flare dashboard` command to open browser (2026-07-11)
