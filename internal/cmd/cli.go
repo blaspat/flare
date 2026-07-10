@@ -153,30 +153,43 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 			return fmt.Errorf("cron job %q: parse schedule: %w", j.Name, err)
 		}
 		cronJobs = append(cronJobs, cron.Job{
-			Name:     j.Name,
-			Command:  j.Command,
-			Timeout:  j.Timeout,
-			Schedule: sched,
+			Name:         j.Name,
+			Command:      j.Command,
+			Timeout:      j.Timeout,
+			Schedule:     sched,
+			MaxRetries:   j.RetryCount,
+			RetryDelay:   config.EffectiveRetryDelay(j.RetryDelay),
+			CatchUpLimit: j.CatchUpLimit,
 		})
 	}
 
-	// Create cron manager for distributed job scheduling.
-	// The handler executes scripts with timeout.
+	// Create cron manager for distributed job scheduling with HA features.
+	// The handler executes scripts with timeout and reports completion via OnResult.
 	cm := cron.NewManager(func(e cron.Event) {
-		ctx, cancel := context.WithTimeout(context.Background(), e.Timeout)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, "sh", "-c", e.Command)
+		cmdCtx, cmdCancel := context.WithTimeout(context.Background(), e.Timeout)
+		defer cmdCancel()
+		cmd := exec.CommandContext(cmdCtx, "sh", "-c", e.Command)
 		output, err := cmd.CombinedOutput()
+
+		// Report completion via OnResult for history tracking and retry support
+		if e.OnResult != nil {
+			e.OnResult(err, string(output), 0)
+		}
+
+		// Also log at appropriate level
 		if err != nil {
-			if ctx.Err() != nil {
+			if cmdCtx.Err() != nil {
 				slog.Warn("cron job timed out", "name", e.Name, "timeout", e.Timeout)
 			} else {
 				slog.Error("cron job failed", "name", e.Name, "err", err, "output", string(output))
 			}
-			return
+		} else {
+			slog.Info("cron job completed", "name", e.Name, "output", string(output))
 		}
-		slog.Info("cron job completed", "name", e.Name, "output", string(output))
 	}, 0)
+	cm.SetNodeName(cfg.Node.Name)
+	cm.SetCatchUpLookback(cfg.EffectiveCatchUpLookback())
+	cm.SetHistoryMax(cfg.Cron.HistorySize)
 	cm.SetJobs(cronJobs)
 	cm.Start(ctx)
 	defer cm.Stop()
@@ -490,30 +503,43 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 			return fmt.Errorf("cron job %q: parse schedule: %w", j.Name, err)
 		}
 		cronJobs = append(cronJobs, cron.Job{
-			Name:     j.Name,
-			Command:  j.Command,
-			Timeout:  j.Timeout,
-			Schedule: sched,
+			Name:         j.Name,
+			Command:      j.Command,
+			Timeout:      j.Timeout,
+			Schedule:     sched,
+			MaxRetries:   j.RetryCount,
+			RetryDelay:   config.EffectiveRetryDelay(j.RetryDelay),
+			CatchUpLimit: j.CatchUpLimit,
 		})
 	}
 
-	// Create cron manager for distributed job scheduling.
-	// The handler executes scripts with timeout.
+	// Create cron manager for distributed job scheduling with HA features.
+	// The handler executes scripts with timeout and reports completion via OnResult.
 	cm := cron.NewManager(func(e cron.Event) {
-		ctx, cancel := context.WithTimeout(context.Background(), e.Timeout)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, "sh", "-c", e.Command)
+		cmdCtx, cmdCancel := context.WithTimeout(context.Background(), e.Timeout)
+		defer cmdCancel()
+		cmd := exec.CommandContext(cmdCtx, "sh", "-c", e.Command)
 		output, err := cmd.CombinedOutput()
+
+		// Report completion via OnResult for history tracking and retry support
+		if e.OnResult != nil {
+			e.OnResult(err, string(output), 0)
+		}
+
+		// Also log at appropriate level
 		if err != nil {
-			if ctx.Err() != nil {
+			if cmdCtx.Err() != nil {
 				slog.Warn("cron job timed out", "name", e.Name, "timeout", e.Timeout)
 			} else {
 				slog.Error("cron job failed", "name", e.Name, "err", err, "output", string(output))
 			}
-			return
+		} else {
+			slog.Info("cron job completed", "name", e.Name, "output", string(output))
 		}
-		slog.Info("cron job completed", "name", e.Name, "output", string(output))
 	}, 0)
+	cm.SetNodeName(cfg.Node.Name)
+	cm.SetCatchUpLookback(cfg.EffectiveCatchUpLookback())
+	cm.SetHistoryMax(cfg.Cron.HistorySize)
 	cm.SetJobs(cronJobs)
 	cm.Start(ctx)
 	defer cm.Stop()
@@ -955,9 +981,10 @@ func initCmd(ctx context.Context, args []string) error {
 			ChunkSize:    65536,
 		},
 		Cron: config.CronConfig{
-			Enabled:     true,
-			HistorySize: 100,
-			Jobs:        cronJobs,
+			Enabled:         true,
+			HistorySize:     100,
+			CatchUpLookback: "5m",
+			Jobs:            cronJobs,
 		},
 	}
 
@@ -968,7 +995,6 @@ func initCmd(ctx context.Context, args []string) error {
 	buf.WriteString("[node]\n")
 	buf.WriteString(fmt.Sprintf("name = %q\n", cfg.Node.Name))
 	buf.WriteString(fmt.Sprintf("listen = %q\n", cfg.Node.Listen))
-	buf.WriteString(fmt.Sprintf("data_dir = %q\n", cfg.Node.DataDir))
 	buf.WriteString(fmt.Sprintf("log_level = %q\n", cfg.Node.LogLevel))
 
 	buf.WriteString("\n[mesh]\n")
@@ -992,6 +1018,7 @@ func initCmd(ctx context.Context, args []string) error {
 	buf.WriteString("\n[cron]\n")
 	buf.WriteString(fmt.Sprintf("enabled = %v\n", cfg.Cron.Enabled))
 	buf.WriteString(fmt.Sprintf("history_size = %d\n", cfg.Cron.HistorySize))
+	buf.WriteString(fmt.Sprintf("catch_up_lookback = %q\n", cfg.Cron.CatchUpLookback))
 
 	for _, j := range cfg.Cron.Jobs {
 		buf.WriteString(fmt.Sprintf("\n[[cron.jobs]]\n"))

@@ -55,16 +55,20 @@ type WatchDir struct {
 }
 
 type CronConfig struct {
-	Enabled     bool      `toml:"enabled"`
-	HistorySize int       `toml:"history_size"`
-	Jobs        []CronJob `toml:"jobs"`
+	Enabled         bool        `toml:"enabled"`
+	HistorySize     int         `toml:"history_size"`
+	CatchUpLookback string      `toml:"catch_up_lookback"` // how far back to check for missed jobs (default: "5m")
+	Jobs            []CronJob   `toml:"jobs"`
 }
 
 type CronJob struct {
-	Name     string        `toml:"name"`
-	Schedule string        `toml:"schedule"`
-	Command  string        `toml:"command"`
-	Timeout  time.Duration `toml:"timeout"`
+	Name         string        `toml:"name"`
+	Schedule     string        `toml:"schedule"`
+	Command      string        `toml:"command"`
+	Timeout      time.Duration `toml:"timeout"`
+	RetryCount   int           `toml:"retry_count"`    // max retry attempts on failure (0 = no retry)
+	RetryDelay   time.Duration `toml:"retry_delay"`    // delay between retry attempts (default: 30s)
+	CatchUpLimit int           `toml:"catch_up_limit"` // max missed firings to catch up on leadership change (0 = default 1)
 }
 
 func Default() *Config {
@@ -89,9 +93,10 @@ func Default() *Config {
 			ChunkSize:   65536,
 		},
 		Cron: CronConfig{
-			Enabled:     true,
-			HistorySize: 100,
-			Jobs:        []CronJob{},
+			Enabled:         true,
+			HistorySize:     100,
+			CatchUpLookback: "5m",
+			Jobs:            []CronJob{},
 		},
 	}
 }
@@ -218,4 +223,26 @@ func (c *Config) EffectiveTurnUsername() string {
 // EffectiveTurnPassword returns the TURN password.
 func (c *Config) EffectiveTurnPassword() string {
 	return c.Mesh.TurnPassword
+}
+
+// EffectiveCatchUpLookback returns the parsed catch-up lookback duration from config.
+// Defaults to 5 minutes on parse failure.
+func (c *Config) EffectiveCatchUpLookback() time.Duration {
+	if c.Cron.CatchUpLookback == "" {
+		return 5 * time.Minute
+	}
+	d, err := time.ParseDuration(c.Cron.CatchUpLookback)
+	if err != nil {
+		return 5 * time.Minute
+	}
+	return d
+}
+
+// EffectiveRetryDelay returns the effective retry delay for a CronJob.
+// Defaults to 30s if not set.
+func EffectiveRetryDelay(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 30 * time.Second
+	}
+	return d
 }

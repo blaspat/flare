@@ -40,12 +40,16 @@ chunk_size = 65536                 # Transfer chunk size in bytes
 [cron]
 enabled = true                     # Enable distributed cron scheduler
 history_size = 100                 # Max completed job history entries
+catch_up_lookback = "5m"           # How far back to check for missed jobs on leadership change
 
 [[cron.jobs]]
 name = "disk-check"
 schedule = "0 * * * *"            # Every hour
 command = "df -h /"
 timeout = "30s"
+retry_count = 2                    # Retry up to 2 times on failure (0 = no retry)
+retry_delay = "10s"                # Delay between retry attempts
+catch_up_limit = 1                 # Max missed firings to catch up on leadership change
 
 [[cron.jobs]]
 name = "heartbeat"

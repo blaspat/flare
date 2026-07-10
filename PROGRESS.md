@@ -75,10 +75,10 @@
 - [x] TURN relay fallback
 - [x] ICE-style connection negotiation
 
-### P5 — Distributed Cron HA
-- [ ] Cron job history / audit log
-- [ ] Missed-job catch-up on leader election
-- [ ] Configurable job retry policy
+### P5 — Distributed Cron HA ✅ (2026-07-10)
+- [x] Cron job history / audit log
+- [x] Missed-job catch-up on leader election
+- [x] Configurable job retry policy
 
 ### P5 — CRDT-Style Merge
 - [ ] Last-writer-wins for concurrent file edits

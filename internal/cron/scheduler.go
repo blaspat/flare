@@ -9,10 +9,13 @@ import (
 
 // Job represents a scheduled job.
 type Job struct {
-	Name     string
-	Command  string
-	Timeout  time.Duration
-	Schedule Schedule
+	Name         string
+	Command      string
+	Timeout      time.Duration
+	Schedule     Schedule
+	MaxRetries   int           // max retry attempts on failure (0 = no retry)
+	RetryDelay   time.Duration // delay between retry attempts (default: 30s)
+	CatchUpLimit int           // max missed firings to catch up on leadership change (0 = no catch-up)
 }
 
 // jobState tracks a job's runtime state inside the scheduler.
@@ -31,6 +34,16 @@ type Event struct {
 	Timeout time.Duration
 	// FiredAt is when the job was triggered.
 	FiredAt time.Time
+	// MaxRetries is the maximum retry attempts for this job.
+	MaxRetries int
+	// RetryAttempt is which retry this is (0 = first attempt).
+	RetryAttempt int
+	// RetryDelay is the delay between retry attempts.
+	RetryDelay time.Duration
+	// OnResult, if non-nil, is called by the handler when execution completes.
+	// err is non-nil on failure. output is the command's stdout+stderr.
+	// If OnResult is nil, the scheduler/manager cannot track completion or retry.
+	OnResult func(err error, output string, duration time.Duration)
 }
 
 // EventHandler is called when a job fires.
@@ -198,10 +211,13 @@ func (s *Scheduler) fireDue(now time.Time) {
 			"scheduled", d.at.Format(time.RFC3339),
 		)
 		s.handler(Event{
-			Name:    d.job.Name,
-			Command: d.job.Command,
-			Timeout: d.job.Timeout,
-			FiredAt: d.at,
+			Name:         d.job.Name,
+			Command:      d.job.Command,
+			Timeout:      d.job.Timeout,
+			FiredAt:      d.at,
+			MaxRetries:   d.job.MaxRetries,
+			RetryDelay:   d.job.RetryDelay,
+			OnResult:     nil,
 		})
 	}
 }
