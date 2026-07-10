@@ -97,8 +97,9 @@ func Connect(ctx context.Context, addr string, nodeName string, hub *Hub) (*Peer
 }
 
 // StartListener creates and starts the mesh WebSocket listener in a goroutine.
-// Returns the listener so it can be shut down.
-func StartListener(ctx context.Context, addr string, nodeName string, hub *Hub) *Listener {
+// Returns the listener so it can be shut down. If tlsCert and tlsKey are both
+// non-empty, the listener is wrapped with TLS; otherwise it serves plain WS.
+func StartListener(ctx context.Context, addr string, nodeName string, hub *Hub, tlsCert, tlsKey string) *Listener {
 	handler := func(conn *websocket.Conn) {
 		// Read hello message
 		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
@@ -173,6 +174,9 @@ func StartListener(ctx context.Context, addr string, nodeName string, hub *Hub) 
 	}
 
 	listener := NewListener(addr, handler)
+	if tlsCert != "" && tlsKey != "" {
+		listener = listener.WithTLS(tlsCert, tlsKey)
+	}
 	go func() {
 		if err := listener.Start(ctx); err != nil {
 			slog.Error("mesh listener stopped", "err", err)

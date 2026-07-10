@@ -313,7 +313,7 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 	}
 
 	// Start mesh listener
-	_ = mesh.StartListener(ctx, cfg.Node.Listen, cfg.Node.Name, h)
+	_ = mesh.StartListener(ctx, cfg.Node.Listen, cfg.Node.Name, h, cfg.Node.TLSCert, cfg.Node.TLSKey)
 
 	// Start sync polling loop — triggered by event-driven watcher,
 	// with initial poll on startup.
@@ -583,7 +583,7 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 		slog.Warn("load tracker state", "err", err)
 	}
 
-	_ = mesh.StartListener(ctx, cfg.Node.Listen, cfg.Node.Name, h)
+	_ = mesh.StartListener(ctx, cfg.Node.Listen, cfg.Node.Name, h, cfg.Node.TLSCert, cfg.Node.TLSKey)
 
 	// Start sync polling loop.
 	pollInterval := cfg.Sync.PollInterval

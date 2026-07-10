@@ -21,6 +21,8 @@ type NodeConfig struct {
 	Listen   string `toml:"listen"`
 	DataDir  string `toml:"data_dir"`
 	LogLevel string `toml:"log_level"`
+	TLSCert  string `toml:"tls_cert"`
+	TLSKey   string `toml:"tls_key"`
 }
 // MeshConfig defines mesh networking parameters.
 type MeshConfig struct {

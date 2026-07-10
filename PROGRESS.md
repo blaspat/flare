@@ -54,10 +54,10 @@
 - [x] Configurable bytes-per-second limit
 - [x] Per-peer throttle configuration
 
-### P4 — Direct TLS
-- [ ] `tls_cert` / `tls_key` config options
-- [ ] Wrap WebSocket listener with crypto/tls
-- [ ] Graceful fallback to plain WS
+### P4 — Direct TLS ✅ (2026-07-10)
+- [x] `tls_cert` / `tls_key` config options
+- [x] Wrap WebSocket listener with crypto/tls
+- [x] Graceful fallback to plain WS
 
 ### P4 — Content-Defined Chunking
 - [ ] Gear hash / Rabin fingerprint chunker

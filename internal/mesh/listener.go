@@ -18,6 +18,8 @@ type Listener struct {
 	server   *http.Server
 	upgrader websocket.Upgrader
 	onConn   ConnHandler
+	certFile string
+	keyFile  string
 }
 
 // NewListener creates a WebSocket listener that calls onConn for each upgrade.
@@ -34,6 +36,16 @@ func NewListener(addr string, onConn ConnHandler) *Listener {
 	}
 }
 
+// WithTLS enables TLS on the listener using the given certificate and key files.
+// Returns the listener for chaining. If either path is empty, TLS is not enabled.
+func (l *Listener) WithTLS(certFile, keyFile string) *Listener {
+	if certFile != "" && keyFile != "" {
+		l.certFile = certFile
+		l.keyFile = keyFile
+	}
+	return l
+}
+
 // Start begins listening for WebSocket connections.
 // Blocks until the context is cancelled.
 func (l *Listener) Start(ctx context.Context) error {
@@ -45,7 +57,14 @@ func (l *Listener) Start(ctx context.Context) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		if err := l.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		var err error
+		if l.certFile != "" && l.keyFile != "" {
+			slog.Info("TLS enabled", "cert", l.certFile)
+			err = l.server.ListenAndServeTLS(l.certFile, l.keyFile)
+		} else {
+			err = l.server.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()

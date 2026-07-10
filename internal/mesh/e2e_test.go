@@ -25,14 +25,14 @@ func TestE2E_TwoNodeMesh(t *testing.T) {
 	var onPeerChangeA atomic.Int64
 	hubA.OnPeerChange(func() { onPeerChangeA.Add(1) })
 
-	_ = StartListener(ctx, "127.0.0.1:19721", "alpha", hubA)
+	_ = StartListener(ctx, "127.0.0.1:19721", "alpha", hubA, "", "")
 
 	// --- Node B (beta, :19722) ---
 	hubB := NewHub(func(p *PeerState) { _ = p })
 	var onPeerChangeB atomic.Int64
 	hubB.OnPeerChange(func() { onPeerChangeB.Add(1) })
 
-	_ = StartListener(ctx, "127.0.0.1:19722", "beta", hubB)
+	_ = StartListener(ctx, "127.0.0.1:19722", "beta", hubB, "", "")
 
 	// Let listeners start
 	time.Sleep(200 * time.Millisecond)
@@ -96,11 +96,11 @@ func TestE2E_TwoNodeMessageRelay(t *testing.T) {
 
 	// --- Node A (alpha, :19723) ---
 	hubA := NewHub(func(p *PeerState) { _ = p })
-	_ = StartListener(ctx, "127.0.0.1:19723", "alpha", hubA)
+	_ = StartListener(ctx, "127.0.0.1:19723", "alpha", hubA, "", "")
 
 	// --- Node B (beta, :19724) ---
 	hubB := NewHub(func(p *PeerState) { _ = p })
-	_ = StartListener(ctx, "127.0.0.1:19724", "beta", hubB)
+	_ = StartListener(ctx, "127.0.0.1:19724", "beta", hubB, "", "")
 
 	time.Sleep(200 * time.Millisecond)
 
@@ -198,14 +198,14 @@ func TestE2E_TwoNodeLeadership(t *testing.T) {
 	eA := election.NewElector("alpha", func(isLeader bool) { _ = isLeader })
 	hubA.OnPeerChange(func() { eA.Elect(hubA.ListNames()) })
 	eA.Elect(hubA.ListNames())
-	_ = StartListener(ctx, "127.0.0.1:19725", "alpha", hubA)
+	_ = StartListener(ctx, "127.0.0.1:19725", "alpha", hubA, "", "")
 
 	// --- Node B (beta, :19726) ---
 	hubB := NewHub(func(p *PeerState) { _ = p })
 	eB := election.NewElector("beta", func(isLeader bool) { _ = isLeader })
 	hubB.OnPeerChange(func() { eB.Elect(hubB.ListNames()) })
 	eB.Elect(hubB.ListNames())
-	_ = StartListener(ctx, "127.0.0.1:19726", "beta", hubB)
+	_ = StartListener(ctx, "127.0.0.1:19726", "beta", hubB, "", "")
 
 	time.Sleep(200 * time.Millisecond)
 
