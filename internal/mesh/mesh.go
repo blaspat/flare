@@ -4,16 +4,26 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/url"
+	"net"
+	net_url "net/url"
 	"time"
 
+	"github.com/blaspat/flare/internal/nat"
 	"github.com/gorilla/websocket"
 )
 
+// NATInfo wraps NAT traversal results for use in the hello handshake.
+type NATInfo struct {
+	PublicAddr   string // "ip:port" of the node's STUN-discovered public address
+	NATType      string // string representation of NAT type (e.g., "full-cone", "symmetric")
+	NATResult    *nat.NATResult
+	NatCandCache []nat.Candidate
+}
+
 // Connect establishes an outgoing WebSocket connection to a peer.
 // It performs the hello handshake and registers the peer with the hub.
-func Connect(ctx context.Context, addr string, nodeName string, hub *Hub) (*PeerState, error) {
-	u, err := url.Parse(addr)
+func Connect(ctx context.Context, addr string, nodeName string, hub *Hub, natInfo *NATInfo) (*PeerState, error) {
+	u, err := net_url.Parse(addr)
 	if err != nil {
 		return nil, fmt.Errorf("parse address: %w", err)
 	}
@@ -32,11 +42,21 @@ func Connect(ctx context.Context, addr string, nodeName string, hub *Hub) (*Peer
 		return nil, fmt.Errorf("dial peer: %w", err)
 	}
 
+	// Build hello with NAT info if available.
+	publicAddr := ""
+	natType := ""
+	if natInfo != nil {
+		publicAddr = natInfo.PublicAddr
+		natType = natInfo.NATType
+	}
+
 	// Send hello
 	hello := MustNewMessage(MsgHello, nodeName, &HelloPayload{
 		NodeName:   nodeName,
 		Version:    "0.1.0",
 		ListenAddr: "", // we don't advertise a listen addr on outgoing connections
+		PublicAddr: publicAddr,
+		NATType:    natType,
 	})
 	data, err := hello.Marshal()
 	if err != nil {
@@ -79,6 +99,17 @@ func Connect(ctx context.Context, addr string, nodeName string, hub *Hub) (*Peer
 		return nil, fmt.Errorf("cannot connect to self (%s)", nodeName)
 	}
 
+	// Log the peer's NAT info.
+	if helloResp.PublicAddr != "" {
+		slog.Debug("peer NAT info",
+			"peer", peerName,
+			"public_addr", helloResp.PublicAddr,
+			"nat_type", helloResp.NATType)
+		// Store NAT info on peer state if we extend it in the future.
+		_ = helloResp.PublicAddr
+		_ = helloResp.NATType
+	}
+
 	// Clear deadlines — they must not leak into the peer pumps
 	conn.SetReadDeadline(time.Time{})
 	conn.SetWriteDeadline(time.Time{})
@@ -93,13 +124,18 @@ func Connect(ctx context.Context, addr string, nodeName string, hub *Hub) (*Peer
 		HandleMessage(hub, nodeName, peer, msg)
 	})
 
+	// Share NAT candidates after connection.
+	if natInfo != nil && len(natInfo.NatCandCache) > 0 {
+		shareNATCandidates(peer, nodeName, natInfo.NatCandCache)
+	}
+
 	return peer, nil
 }
 
 // StartListener creates and starts the mesh WebSocket listener in a goroutine.
 // Returns the listener so it can be shut down. If tlsCert and tlsKey are both
 // non-empty, the listener is wrapped with TLS; otherwise it serves plain WS.
-func StartListener(ctx context.Context, addr string, nodeName string, hub *Hub, tlsCert, tlsKey string) *Listener {
+func StartListener(ctx context.Context, addr string, nodeName string, hub *Hub, tlsCert, tlsKey string, natInfo *NATInfo) *Listener {
 	handler := func(conn *websocket.Conn) {
 		// Read hello message
 		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
@@ -138,11 +174,29 @@ func StartListener(ctx context.Context, addr string, nodeName string, hub *Hub, 
 			return
 		}
 
+		// Log peer NAT info.
+		if hello.PublicAddr != "" {
+			slog.Debug("incoming peer NAT info",
+				"peer", peerName,
+				"public_addr", hello.PublicAddr,
+				"nat_type", hello.NATType)
+		}
+
+		// Build hello response with our NAT info.
+		publicAddr := ""
+		natType := ""
+		if natInfo != nil {
+			publicAddr = natInfo.PublicAddr
+			natType = natInfo.NATType
+		}
+
 		// Send our hello back
 		resp := MustNewMessage(MsgHello, nodeName, &HelloPayload{
 			NodeName:   nodeName,
 			Version:    "0.1.0",
 			ListenAddr: addr,
+			PublicAddr: publicAddr,
+			NATType:    natType,
 		})
 		respData, err := resp.Marshal()
 		if err != nil {
@@ -171,6 +225,11 @@ func StartListener(ctx context.Context, addr string, nodeName string, hub *Hub, 
 		})
 		go peer.writePump(ctx)
 		go peer.heartbeatLoop(ctx)
+
+		// Share NAT candidates after handshake.
+		if natInfo != nil && len(natInfo.NatCandCache) > 0 {
+			shareNATCandidates(peer, nodeName, natInfo.NatCandCache)
+		}
 	}
 
 	listener := NewListener(addr, handler)
@@ -183,6 +242,31 @@ func StartListener(ctx context.Context, addr string, nodeName string, hub *Hub, 
 		}
 	}()
 	return listener
+}
+
+// shareNATCandidates sends the node's ICE candidates to a peer.
+func shareNATCandidates(peer *PeerState, nodeName string, candidates []nat.Candidate) {
+	entries := make([]CandidateEntry, 0, len(candidates))
+	for _, c := range candidates {
+		entries = append(entries, CandidateEntry{
+			IP:       c.IP.String(),
+			Port:     c.Port,
+			Type:     string(c.Type),
+			Priority: c.Priority,
+		})
+	}
+
+	msg := MustNewMessage(MsgNatCandSend, nodeName, &NatCandidatePayload{
+		Candidates: entries,
+	})
+	data, err := msg.Marshal()
+	if err != nil {
+		slog.Warn("marshal NAT candidate message", "err", err)
+		return
+	}
+	if err := peer.Send(data); err != nil {
+		slog.Warn("send NAT candidates", "peer", peer.Name, "err", err)
+	}
 }
 
 // HandleMessage routes incoming messages from peers.
@@ -204,6 +288,22 @@ func HandleMessage(hub *Hub, nodeName string, peer *PeerState, msg *Message) {
 		}
 	case MsgPong:
 		// handled implicitly
+	case MsgNatCandSend:
+		// Received ICE candidates from peer — log them for diagnostic purposes.
+		// In a full ICE implementation, these would be used for connectivity checks.
+		payload, err := DecodePayload[NatCandidatePayload](msg)
+		if err != nil {
+			slog.Warn("decode NAT candidate payload", "from", msg.From, "err", err)
+			return
+		}
+		slog.Debug("received NAT candidates from peer",
+			"from", msg.From,
+			"count", len(payload.Candidates))
+		for _, c := range payload.Candidates {
+			slog.Debug("  candidate", "type", c.Type, "addr", net.JoinHostPort(c.IP, fmt.Sprintf("%d", c.Port)))
+		}
+	case MsgNatCandAck:
+		// Acknowledgment — nothing to do for now.
 	default:
 		slog.Debug("unhandled message type", "from", msg.From, "type", msg.Type)
 	}

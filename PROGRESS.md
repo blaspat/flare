@@ -70,10 +70,10 @@
 - [x] Transparent decrypt on read (ReadDecryptedWithFallback for legacy files)
 - [x] Full test suite in crypt_test.go (23 tests)
 
-### P5 — NAT Traversal
-- [ ] STUN client for public address discovery
-- [ ] TURN relay fallback
-- [ ] ICE-style connection negotiation
+### P5 — NAT Traversal ✅ (2026-07-10)
+- [x] STUN client for public address discovery
+- [x] TURN relay fallback
+- [x] ICE-style connection negotiation
 
 ### P5 — Distributed Cron HA
 - [ ] Cron job history / audit log

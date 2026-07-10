@@ -235,7 +235,7 @@ func (rm *ReconnectManager) reconnectLoop(name, addr string, startAttempt int, s
 		}
 
 		slog.Debug("attempting reconnect", "peer", name, "addr", addr, "attempt", attempt+1)
-		peer, err := Connect(rm.ctx, addr, rm.selfName, rm.hub)
+		peer, err := Connect(rm.ctx, addr, rm.selfName, rm.hub, nil)
 		if err != nil {
 			if rm.ctx.Err() != nil {
 				return

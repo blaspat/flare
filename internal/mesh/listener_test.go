@@ -336,7 +336,7 @@ func TestStartListener_PassesTLS(t *testing.T) {
 	hub := NewHub(func(p *PeerState) { _ = p })
 
 	// Start a plain WS listener via StartListener helper
-	ln := StartListener(ctx, "127.0.0.1:19733", "test-node", hub, "", "")
+	ln := StartListener(ctx, "127.0.0.1:19733", "test-node", hub, "", "", nil)
 	if ln == nil {
 		t.Fatal("StartListener returned nil")
 	}

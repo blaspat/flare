@@ -35,6 +35,10 @@ type MeshConfig struct {
 	BackoffMin         time.Duration `toml:"backoff_min"`        // initial backoff (default: 1s)
 	BackoffMax         time.Duration `toml:"backoff_max"`        // max backoff (default: 60s)
 	CircuitBreakerLimit int          `toml:"circuit_breaker_limit"` // consecutive failures before circuit opens (0=disabled, default: 10)
+	STUNServers        []string      `toml:"stun_servers"`       // STUN servers for NAT discovery (default: stun.l.google.com:19302)
+	TurnServer         string        `toml:"turn_server"`        // TURN relay server address
+	TurnUsername       string        `toml:"turn_username"`
+	TurnPassword       string        `toml:"turn_password"`
 }
 
 type SyncConfig struct {
@@ -191,4 +195,27 @@ func (c *Config) EffectiveBandwidthBurst() int64 {
 		return c.Sync.BandwidthBurst
 	}
 	return c.EffectiveBandwidthLimit()
+}
+
+// EffectiveSTUNServers returns the configured STUN servers, or the default.
+func (c *Config) EffectiveSTUNServers() []string {
+	if len(c.Mesh.STUNServers) > 0 {
+		return c.Mesh.STUNServers
+	}
+	return []string{"stun.l.google.com:19302"}
+}
+
+// EffectiveTurnServer returns the TURN server address, or empty string.
+func (c *Config) EffectiveTurnServer() string {
+	return c.Mesh.TurnServer
+}
+
+// EffectiveTurnUsername returns the TURN username.
+func (c *Config) EffectiveTurnUsername() string {
+	return c.Mesh.TurnUsername
+}
+
+// EffectiveTurnPassword returns the TURN password.
+func (c *Config) EffectiveTurnPassword() string {
+	return c.Mesh.TurnPassword
 }

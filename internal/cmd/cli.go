@@ -19,6 +19,7 @@ import (
 	"github.com/blaspat/flare/internal/cron"
 	"github.com/blaspat/flare/internal/election"
 	"github.com/blaspat/flare/internal/mesh"
+	"github.com/blaspat/flare/internal/nat"
 	flaresync "github.com/blaspat/flare/internal/sync"
 	"github.com/blaspat/flare/internal/term"
 )
@@ -29,6 +30,9 @@ var (
 
 	trMu sync.RWMutex
 	tr   *flaresync.TransferManager
+
+	natMu     sync.RWMutex
+	natResult *nat.NATResult
 )
 
 type Command struct {
@@ -201,6 +205,42 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 	h.SetReconnectManager(rm)
 	defer rm.Stop()
 
+	// Run NAT traversal discovery (best-effort — failure is non-fatal).
+	// This discovers our public IP:port via STUN and shares it with peers
+	// during the hello handshake, enabling direct P2P connections across NAT.
+	var natInfo *mesh.NATInfo
+	stunServers := cfg.EffectiveSTUNServers()
+	if len(stunServers) > 0 {
+		detected, err := nat.DetectNATType(stunServers[0], "", 10*time.Second)
+		if err != nil {
+			slog.Warn("STUN discovery failed (NAT traversal will not be advertised)",
+				"err", err)
+		} else {
+			slog.Info("NAT traversal info",
+				"public_addr", detected.PublicAddrStr(),
+				"nat_type", detected.NATType.String())
+
+			// Gather ICE candidates for peer exchange.
+			candidates, err := nat.GatherCandidates(cfg.Node.Listen, detected.Primary)
+			if err != nil {
+				slog.Warn("gather ICE candidates", "err", err)
+				candidates = nil
+			}
+
+			natInfo = &mesh.NATInfo{
+				PublicAddr:   detected.PublicAddrStr(),
+				NATType:      detected.NATType.String(),
+				NATResult:    detected,
+				NatCandCache: candidates,
+			}
+
+			// Store for status command.
+			natMu.Lock()
+			natResult = detected
+			natMu.Unlock()
+		}
+	}
+
 	slog.Info("starting flare node", "name", cfg.Node.Name, "listen", cfg.Node.Listen)
 	// Show startup banner
 	fmt.Print(term.BannerASCII())
@@ -320,7 +360,7 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 	}
 
 	// Start mesh listener
-	_ = mesh.StartListener(ctx, cfg.Node.Listen, cfg.Node.Name, h, cfg.Node.TLSCert, cfg.Node.TLSKey)
+	_ = mesh.StartListener(ctx, cfg.Node.Listen, cfg.Node.Name, h, cfg.Node.TLSCert, cfg.Node.TLSKey, natInfo)
 
 	// Start sync polling loop — triggered by event-driven watcher,
 	// with initial poll on startup.
@@ -598,7 +638,7 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 		slog.Warn("load tracker state", "err", err)
 	}
 
-	_ = mesh.StartListener(ctx, cfg.Node.Listen, cfg.Node.Name, h, cfg.Node.TLSCert, cfg.Node.TLSKey)
+	_ = mesh.StartListener(ctx, cfg.Node.Listen, cfg.Node.Name, h, cfg.Node.TLSCert, cfg.Node.TLSKey, nil)
 
 	// Start sync polling loop.
 	pollInterval := cfg.Sync.PollInterval
@@ -644,7 +684,7 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 	}()
 
 	// Connect to the specified peer
-	peer, err := mesh.Connect(ctx, addr, cfg.Node.Name, h)
+	peer, err := mesh.Connect(ctx, addr, cfg.Node.Name, h, nil)
 	if err != nil {
 		return fmt.Errorf("connect to %s: %w", addr, err)
 	}
@@ -719,6 +759,24 @@ func statusCmd(ctx context.Context, cfgPath string, args []string) error {
 		} else {
 			fmt.Printf("  %sConflicts: %s0\n", term.Bold, term.Reset)
 		}
+	}
+
+	// Show NAT traversal info.
+	natMu.RLock()
+	nr := natResult
+	natMu.RUnlock()
+	if nr != nil {
+		canDirect := "yes"
+		if !nr.CanReceiveIncoming() {
+			canDirect = "no (symmetric)"
+		}
+		fmt.Printf("  %sNAT:   %s%s (%s) — %s %s%s\n",
+			term.Bold, term.Reset,
+			nr.PublicAddrStr(),
+			nr.NATType.String(),
+			term.Dim, "incoming: "+canDirect, term.Reset)
+	} else {
+		fmt.Printf("  %sNAT:   %snot detected\n", term.Bold, term.Reset)
 	}
 
 	return nil

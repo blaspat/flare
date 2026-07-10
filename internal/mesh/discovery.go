@@ -43,7 +43,7 @@ func StartDiscovery(ctx context.Context, cfg DiscoveryConfig, hub *Hub) error {
 	for _, addr := range cfg.StaticPeers {
 		addr := addr
 		go func() {
-			if _, err := Connect(ctx, addr, cfg.NodeName, hub); err != nil {
+			if _, err := Connect(ctx, addr, cfg.NodeName, hub, nil); err != nil {
 				slog.Warn("static peer connect failed", "addr", addr, "err", err)
 			}
 		}()
@@ -134,7 +134,7 @@ func runDiscoveryOnce(ctx context.Context, selfName string, hub *Hub) {
 		addr := p.Addr
 		go func(name string) {
 			slog.Info("connecting to discovered peer", "name", name, "addr", addr)
-			if _, err := Connect(ctx, addr, selfName, hub); err != nil {
+			if _, err := Connect(ctx, addr, selfName, hub, nil); err != nil {
 				slog.Warn("discovered peer connect failed",
 					"name", name, "addr", addr, "err", err)
 			}
