@@ -109,6 +109,10 @@
 ### P2 — Dashboard Auth ✅ (2026-07-11)
 - [x] Login page with session-based auth (username/password via config)
 - [x] Auth middleware — 401 JSON for API, 302 redirect to /login for pages
-- [x] Session tokens (32-byte random, 24h expiry, 10min cleanup)
-- [x] Timing-safe password comparison via crypto/subtle
-- [x] WebSocket protected by auth middleware (401 response on unauthenticated upgrade)
+
+## Phase 8: Windows Build ✅ (2026-07-11)
+- [x] Cross-compile Windows amd64 + arm64 targets
+- [x] Handle daemon mode on Windows (graceful error message)
+- [x] Update build script for Windows targets
+- [x] Update GitHub release workflow for Windows binaries
+- [x] Add Windows install instructions to README

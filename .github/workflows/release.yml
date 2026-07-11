@@ -29,10 +29,11 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           LDFLAGS="-w -s -X main.version=${VERSION}"
 
-          for platform in "linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64"; do
+          for platform in "linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64" "windows/amd64" "windows/arm64"; do
             GOOS="${platform%%/*}"
             GOARCH="${platform##*/}"
             binary="flare_${VERSION}_${GOOS}_${GOARCH}"
+            if [ "$GOOS" = "windows" ]; then binary="${binary}.exe"; fi
 
             echo "Building $GOOS/$GOARCH → $binary"
             GOOS="$GOOS" GOARCH="$GOARCH" CGO_ENABLED=0 \

@@ -20,7 +20,7 @@ TOML config file.
   with resume, vector clocks for causal ordering across the mesh
 - **Distributed cron** — Leader-elected (lowest-name) job scheduling with
   automatic handoff on node failure
-- **Single binary** — Builds for Linux amd64 + arm64. No runtime deps.
+- **Single binary** — Builds for Linux amd64/arm64, macOS amd64/arm64, and Windows amd64/arm64. No runtime deps.
   Configure with one TOML file.
 
 ## Quickstart
@@ -56,11 +56,21 @@ go build -o /usr/local/bin/flare .
 ### Cross-platform build
 
 ```bash
-# Build for linux/amd64 and linux/arm64
+# Build for linux/amd64, linux/arm64, windows/amd64, windows/arm64
 ./scripts/build.sh
 
 # Output in dist/flare-<version>/
 ```
+
+### Windows
+
+Download `flare_<version>_windows_amd64.exe` from the [releases page](https://github.com/blaspat/flare/releases) and run it from a terminal:
+
+```cmd
+flare.exe start
+```
+
+> **Note:** The `-d` daemon flag is not supported on Windows. Run in a terminal window or use `nssm` / Task Scheduler to run as a background service.
 
 ### Pre-built binaries
 

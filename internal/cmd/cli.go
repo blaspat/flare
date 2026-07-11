@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -107,6 +108,9 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 	}
 
 	if *daemon && os.Getenv("_FLARE_DAEMON") == "" {
+		if runtime.GOOS == "windows" {
+			return errors.New("daemon mode (-d) is not supported on Windows — run 'flare start' in a terminal instead")
+		}
 		// Re-exec without the -d flag, detach from terminal
 		childArgs := make([]string, 0, len(os.Args))
 		for _, a := range os.Args[1:] { // skip binary path, we pass it explicitly
@@ -460,6 +464,9 @@ func joinCmd(ctx context.Context, cfgPath string, args []string) error {
 	}
 
 	if *daemon && os.Getenv("_FLARE_DAEMON") == "" {
+		if runtime.GOOS == "windows" {
+			return errors.New("daemon mode (-d) is not supported on Windows — run 'flare join' in a terminal instead")
+		}
 		childArgs := make([]string, 0, len(os.Args))
 		for _, a := range os.Args[1:] {
 			if a != "-d" && a != "--daemon" {
