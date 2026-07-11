@@ -105,3 +105,10 @@
 - [x] Auto-reconnect WebSocket on disconnect (2026-07-10)
 - [x] Sort/filter peers table (2026-07-11)
 - [x] CLI `flare dashboard` command to open browser (2026-07-11)
+
+### P2 — Dashboard Auth ✅ (2026-07-11)
+- [x] Login page with session-based auth (username/password via config)
+- [x] Auth middleware — 401 JSON for API, 302 redirect to /login for pages
+- [x] Session tokens (32-byte random, 24h expiry, 10min cleanup)
+- [x] Timing-safe password comparison via crypto/subtle
+- [x] WebSocket protected by auth middleware (401 response on unauthenticated upgrade)
