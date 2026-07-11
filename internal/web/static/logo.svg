@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f0f1a"/>
+      <stop offset="100%" stop-color="#1a1a2e"/>
+    </linearGradient>
+    <linearGradient id="flare" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ff6b35"/>
+      <stop offset="50%" stop-color="#f7c948"/>
+      <stop offset="100%" stop-color="#ffffff"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#ff6b35" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#ff6b35" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="blur">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" fill="url(#bg)" rx="64"/>
+
+  <!-- Glow behind center -->
+  <circle cx="256" cy="256" r="120" fill="url(#glow)" filter="url(#blur)"/>
+
+  <!-- Connection lines from center to nodes -->
+  <g stroke="#ff6b35" stroke-width="2.5" stroke-linecap="round" opacity="0.5">
+    <line x1="256" y1="256" x2="100" y2="130"/>
+    <line x1="256" y1="256" x2="412" y2="130"/>
+    <line x1="256" y1="256" x2="412" y2="382"/>
+    <line x1="256" y1="256" x2="100" y2="382"/>
+    <line x1="256" y1="256" x2="256" y2="80"/>
+    <line x1="256" y1="256" x2="432" y2="256"/>
+    <line x1="256" y1="256" x2="256" y2="432"/>
+    <line x1="256" y1="256" x2="80" y2="256"/>
+  </g>
+
+  <!-- Orbits -->
+  <g fill="none" stroke="#ff6b35" stroke-width="1" opacity="0.15">
+    <circle cx="256" cy="256" r="170"/>
+    <circle cx="256" cy="256" r="120"/>
+  </g>
+
+  <!-- Outer nodes -->
+  <g fill="#ff6b35">
+    <circle cx="100" cy="130" r="8"/>
+    <circle cx="412" cy="130" r="8"/>
+    <circle cx="412" cy="382" r="8"/>
+    <circle cx="100" cy="382" r="8"/>
+    <circle cx="256" cy="80" r="8"/>
+    <circle cx="432" cy="256" r="8"/>
+    <circle cx="256" cy="432" r="8"/>
+    <circle cx="80" cy="256" r="8"/>
+  </g>
+
+  <!-- Center core — the flare -->
+  <circle cx="256" cy="256" r="45" fill="#f7c948" opacity="0.15" filter="url(#blur)"/>
+  <circle cx="256" cy="256" r="32" fill="url(#flare)" opacity="0.3" filter="url(#blur)"/>
+  <circle cx="256" cy="256" r="22" fill="url(#flare)" opacity="0.6"/>
+  <circle cx="256" cy="256" r="14" fill="#ffffff"/>
+
+  <!-- Inner spark rays -->
+  <g stroke="#f7c948" stroke-width="2" stroke-linecap="round" opacity="0.6">
+    <line x1="256" y1="222" x2="256" y2="205"/>
+    <line x1="256" y1="290" x2="256" y2="307"/>
+    <line x1="222" y1="256" x2="205" y2="256"/>
+    <line x1="290" y1="256" x2="307" y2="256"/>
+    <line x1="232" y1="232" x2="220" y2="220"/>
+    <line x1="280" y1="280" x2="292" y2="292"/>
+    <line x1="232" y1="280" x2="220" y2="292"/>
+    <line x1="280" y1="232" x2="292" y2="220"/>
+  </g>
+</svg>

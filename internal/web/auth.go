@@ -150,7 +150,8 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Public paths — no auth required
 		if r.URL.Path == "/api/login" || r.URL.Path == "/api/logout" ||
-			r.URL.Path == "/login" || r.URL.Path == "/login.html" {
+			r.URL.Path == "/login" || r.URL.Path == "/login.html" ||
+			r.URL.Path == "/logo.svg" {
 			next.ServeHTTP(w, r)
 			return
 		}
