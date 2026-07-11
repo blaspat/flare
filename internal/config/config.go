@@ -27,6 +27,8 @@ type NodeConfig struct {
 	TLSKey         string `toml:"tls_key"`
 	EncryptionKey  string `toml:"encryption_key"`  // hex-encoded 32-byte AES-256 key (empty = disabled)
 	EncryptionFile string `toml:"encryption_key_file"` // path to file with hex key (alternative to inline)
+	WebUsername    string `toml:"web_username"`        // dashboard login username (empty = no auth)
+	WebPassword    string `toml:"web_password"`        // dashboard login password (empty = no auth)
 }
 // MeshConfig defines mesh networking parameters.
 type MeshConfig struct {

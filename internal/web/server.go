@@ -47,6 +47,7 @@ type Server struct {
 	tm   *flaresync.TransferManager
 	cm   *cron.Manager
 	cfg  *config.Config
+	auth *Auth
 
 	nodeName  string
 	startTime time.Time
@@ -66,6 +67,7 @@ func New(hub *mesh.Hub, tm *flaresync.TransferManager, cm *cron.Manager, cfg *co
 		tm:        tm,
 		cm:        cm,
 		cfg:       cfg,
+		auth:      NewAuth(cfg.Node.WebUsername, cfg.Node.WebPassword),
 		nodeName:  nodeName,
 		startTime: time.Now(),
 		upgrader: websocket.Upgrader{
@@ -86,6 +88,21 @@ func (s *Server) Start(ctx context.Context, port int) error {
 
 	mux := http.NewServeMux()
 
+	// Auth (login/logout) — no middleware required
+	mux.HandleFunc("/api/login", s.auth.Login)
+	mux.HandleFunc("/api/logout", s.auth.Logout)
+
+	// Static login page
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		loginHTML, _ := staticFS.ReadFile("static/login.html")
+		if loginHTML == nil {
+			http.Error(w, "not found", 404)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(loginHTML)
+	})
+
 	// REST API
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/peers", s.handlePeers)
@@ -102,13 +119,20 @@ func (s *Server) Start(ctx context.Context, port int) error {
 	}
 	mux.Handle("/", http.FileServer(http.FS(staticSub)))
 
-	addr := fmt.Sprintf(":%d", port)
-	s.httpServer = &http.Server{
-		Addr:    addr,
-		Handler: mux,
+	// Wrap with auth middleware
+	handler := s.auth.Middleware(mux)
+
+	// Start session cleanup if auth enabled
+	if s.auth.Enabled() {
+		go s.auth.cleanupExpired()
 	}
 
-	slog.Info("web dashboard starting", "addr", addr, "port", port)
+	addr := fmt.Sprintf(":%d", port)
+	slog.Info("web dashboard starting", "addr", addr, "port", port, "auth", s.auth.Enabled())
+	s.httpServer = &http.Server{
+		Addr:    addr,
+		Handler: handler,
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
