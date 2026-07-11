@@ -64,13 +64,49 @@ go build -o /usr/local/bin/flare .
 
 ### Windows
 
-Download `flare_<version>_windows_amd64.exe` from the [releases page](https://github.com/blaspat/flare/releases) and run it from a terminal:
+Download `flare_<version>_windows_amd64.exe` from the [releases page](https://github.com/blaspat/flare/releases).
+
+#### Terminal (foreground)
 
 ```cmd
 flare.exe start
 ```
 
-> **Note:** The `-d` daemon flag is not supported on Windows. Run in a terminal window or use `nssm` / Task Scheduler to run as a background service.
+#### Background service with NSSM
+
+For a proper Windows service that starts on boot and runs in the background:
+
+1. Download [NSSM](https://nssm.cc/download) (Non-Sucking Service Manager)
+2. Install Flare as a service:
+
+```cmd
+nssm install Flare "C:\path\to\flare.exe" "start"
+nssm set Flare AppDirectory "C:\path\to\flare\"
+nssm set Flare DisplayName "Flare Edge Mesh"
+nssm set Flare Description "P2P edge mesh server for file sync and distributed cron"
+nssm set Flare Start SERVICE_AUTO_START
+nssm set Flare AppStdout "C:\path\to\flare\flare.log"
+nssm set Flare AppStderr "C:\path\to\flare\flare.log"
+nssm set Flare AppRotateFiles 1
+nssm set Flare AppRotateSeconds 86400
+```
+
+3. Start the service:
+
+```cmd
+nssm start Flare
+```
+
+To check status: `nssm status Flare`  
+To remove: `nssm remove Flare confirm`
+
+#### Task Scheduler (alternative)
+
+If you prefer not to use NSSM, create a scheduled task:
+
+```cmd
+schtasks /create /tn "Flare" /tr "C:\path\to\flare.exe start" /sc onstart /delay 0000:30 /ru SYSTEM /rl HIGHEST
+```
 
 ### Pre-built binaries
 
