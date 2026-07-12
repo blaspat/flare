@@ -81,6 +81,7 @@ func Default() *Config {
 			Listen:   ":9721",
 			DataDir:  "./data",
 			LogLevel: "info",
+			WebPort:  9722,
 		},
 		Mesh: MeshConfig{
 			Peers:               []string{},

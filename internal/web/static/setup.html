@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flare — Setup</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: #0d1117;
+    color: #c9d1d9;
+    min-height: 100vh;
+    padding: 40px 20px;
+  }
+  .container {
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  .header {
+    text-align: center;
+    margin-bottom: 32px;
+  }
+  .header img { border-radius: 12px; margin-bottom: 8px; }
+  .header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #58a6ff, #3fb950);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .header p { color: #8b949e; font-size: 14px; margin-top: 4px; }
+  .card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 28px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: #f0f6fc;
+  }
+  .form-group { margin-bottom: 16px; }
+  .form-group:last-child { margin-bottom: 0; }
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: #8b949e;
+    margin-bottom: 6px;
+  }
+  label .optional {
+    font-weight: 400;
+    color: #6e7681;
+  }
+  input[type="text"], input[type="password"], select {
+    width: 100%;
+    padding: 10px 12px;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #c9d1d9;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  input:focus { border-color: #58a6ff; }
+  input::placeholder { color: #484f58; }
+  .input-hint {
+    font-size: 12px;
+    color: #6e7681;
+    margin-top: 4px;
+  }
+  .tag-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #1f2937;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 13px;
+  }
+  .tag button {
+    background: none;
+    border: none;
+    color: #f85149;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0;
+  }
+  .tag button:hover { color: #ff6b6b; }
+  .add-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .add-row input { flex: 1; }
+  .add-row button {
+    padding: 8px 16px;
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #c9d1d9;
+    cursor: pointer;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .add-row button:hover { background: #30363d; }
+  .actions {
+    text-align: center;
+    margin-top: 24px;
+  }
+  .btn-primary {
+    padding: 12px 48px;
+    background: #238636;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .btn-primary:hover { background: #2ea043; }
+  .btn-primary:disabled {
+    background: #1a5a28;
+    cursor: not-allowed;
+    opacity: 0.7;
+  }
+  .error {
+    color: #f85149;
+    font-size: 13px;
+    text-align: center;
+    margin-top: 12px;
+    display: none;
+  }
+  .error.visible { display: block; }
+  .success {
+    color: #3fb950;
+    font-size: 14px;
+    text-align: center;
+    margin-top: 12px;
+    display: none;
+  }
+  .success.visible { display: block; }
+  .success a { color: #58a6ff; }
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid #fff;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (max-width: 600px) {
+    body { padding: 20px 12px; }
+    .card { padding: 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <img src="/logo.svg" width="72" height="72" alt="" style="border-radius:12px;">
+    <h1>Flare</h1>
+    <p>Set up your edge mesh node</p>
+  </div>
+
+  <form id="setupForm">
+    <!-- Node -->
+    <div class="card">
+      <h2>Node</h2>
+      <div class="form-group">
+        <label for="name">Node name</label>
+        <input type="text" id="name" name="name" placeholder="my-laptop" required>
+        <div class="input-hint">Unique name for this machine. Shown in the mesh and dashboard.</div>
+      </div>
+      <div class="form-group">
+        <label for="listen">Listen address</label>
+        <input type="text" id="listen" name="listen" placeholder=":9721" value=":9721">
+        <div class="input-hint">Port other Flare nodes connect to.</div>
+      </div>
+      <div class="form-group">
+        <label for="data_dir">Data directory</label>
+        <input type="text" id="data_dir" name="data_dir" placeholder="./data" value="./data">
+        <div class="input-hint">Where Flare stores its state and synced files.</div>
+      </div>
+      <div class="form-group">
+        <label for="log_level">Log level</label>
+        <select id="log_level" name="log_level">
+          <option value="debug">debug</option>
+          <option value="info" selected>info</option>
+          <option value="warn">warn</option>
+          <option value="error">error</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Dashboard -->
+    <div class="card">
+      <h2>Dashboard <span class="optional">(optional)</span></h2>
+      <div class="form-group">
+        <label for="web_port">Dashboard port</label>
+        <input type="text" id="web_port" name="web_port" placeholder="9722" value="9722">
+        <div class="input-hint">Web UI port. Set to 0 to disable.</div>
+      </div>
+      <div class="form-group">
+        <label for="username">Username <span class="optional">(leave blank for no auth)</span></label>
+        <input type="text" id="username" name="username" placeholder="admin" autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label for="password">Password <span class="optional">(leave blank for no auth)</span></label>
+        <input type="password" id="password" name="password" placeholder="••••••••" autocomplete="off">
+      </div>
+    </div>
+
+    <!-- Peers -->
+    <div class="card">
+      <h2>Peers <span class="optional">(optional)</span></h2>
+      <div id="peerList" class="tag-list"></div>
+      <div class="add-row">
+        <input type="text" id="peerInput" placeholder="ws://vpn-instance:9721">
+        <button type="button" onclick="addPeer()">Add</button>
+      </div>
+      <div class="input-hint">Other Flare nodes to connect to. Add one per line.</div>
+    </div>
+
+    <!-- Watch directories -->
+    <div class="card">
+      <h2>Watch directories <span class="optional">(optional)</span></h2>
+      <div id="dirList" class="tag-list"></div>
+      <div class="add-row">
+        <input type="text" id="dirInput" placeholder="C:\FlareSync or /home/user/sync">
+        <button type="button" onclick="addDir()">Add</button>
+      </div>
+      <div class="input-hint">Folders to sync across the mesh. Add one per line.</div>
+    </div>
+
+    <!-- Submit -->
+    <div class="actions">
+      <button type="submit" class="btn-primary" id="saveBtn">Save &amp; Start</button>
+      <div class="error" id="errorMsg"></div>
+      <div class="success" id="successMsg"></div>
+    </div>
+  </form>
+</div>
+
+<script>
+// --- Peer management ---
+function addPeer() {
+  const input = document.getElementById('peerInput');
+  const val = input.value.trim();
+  if (!val) return;
+  addTag('peerList', val, removePeer);
+  input.value = '';
+  input.focus();
+}
+function removePeer(btn) {
+  btn.parentElement.remove();
+}
+document.getElementById('peerInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); addPeer(); }
+});
+
+// --- Dir management ---
+function addDir() {
+  const input = document.getElementById('dirInput');
+  const val = input.value.trim();
+  if (!val) return;
+  addTag('dirList', val, removeDir);
+  input.value = '';
+  input.focus();
+}
+function removeDir(btn) {
+  btn.parentElement.remove();
+}
+document.getElementById('dirInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); addDir(); }
+});
+
+function addTag(listId, text, removeFn) {
+  const list = document.getElementById(listId);
+  const tag = document.createElement('span');
+  tag.className = 'tag';
+  tag.innerHTML = `<span>${escapeHtml(text)}</span><button type="button">&times;</button>`;
+  tag.querySelector('button').onclick = () => removeFn(tag.querySelector('button'));
+  list.appendChild(tag);
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function collectTags(listId) {
+  const tags = document.getElementById(listId).querySelectorAll('.tag');
+  return Array.from(tags).map(t => t.querySelector('span').textContent);
+}
+
+// --- Submit ---
+document.getElementById('setupForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('saveBtn');
+  const errorEl = document.getElementById('errorMsg');
+  const successEl = document.getElementById('successMsg');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Saving…';
+  errorEl.classList.remove('visible');
+  successEl.classList.remove('visible');
+
+  const parsePort = (v) => { const n = parseInt(v, 10); return isNaN(n) ? 0 : n; };
+
+  const body = {
+    name: document.getElementById('name').value.trim(),
+    listen: document.getElementById('listen').value.trim(),
+    data_dir: document.getElementById('data_dir').value.trim(),
+    web_port: parsePort(document.getElementById('web_port').value),
+    peers: collectTags('peerList'),
+    watch_dirs: collectTags('dirList'),
+    username: document.getElementById('username').value.trim(),
+    password: document.getElementById('password').value,
+    log_level: document.getElementById('log_level').value,
+  };
+
+  try {
+    const res = await fetch('/api/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      successEl.innerHTML = `Config saved! <a href="/">Go to dashboard →</a>`;
+      successEl.classList.add('visible');
+      btn.textContent = 'Saved ✓';
+    } else {
+      errorEl.textContent = data.error || 'Save failed';
+      errorEl.classList.add('visible');
+      btn.disabled = false;
+      btn.innerHTML = 'Save &amp; Start';
+    }
+  } catch (err) {
+    errorEl.textContent = 'Connection error — is Flare running?';
+    errorEl.classList.add('visible');
+    btn.disabled = false;
+    btn.innerHTML = 'Save &amp; Start';
+  }
+});
+</script>
+</body>
+</html>

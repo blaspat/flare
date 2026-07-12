@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -49,7 +50,8 @@ type Server struct {
 	cfg  *config.Config
 	auth *Auth
 
-	nodeName  string
+	configPath string
+	nodeName   string
 	startTime time.Time
 
 	httpServer *http.Server
@@ -61,14 +63,15 @@ type Server struct {
 
 // New creates a web dashboard Server. Pass nil for any dependency to skip
 // its related endpoints (safe to use before the full mesh is initialised).
-func New(hub *mesh.Hub, tm *flaresync.TransferManager, cm *cron.Manager, cfg *config.Config, nodeName string) *Server {
+func New(hub *mesh.Hub, tm *flaresync.TransferManager, cm *cron.Manager, cfg *config.Config, nodeName, configPath string) *Server {
 	return &Server{
-		hub:       hub,
-		tm:        tm,
-		cm:        cm,
-		cfg:       cfg,
-		auth:      NewAuth(cfg.Node.WebUsername, cfg.Node.WebPassword),
-		nodeName:  nodeName,
+		hub:        hub,
+		tm:         tm,
+		cm:         cm,
+		cfg:        cfg,
+		auth:       NewAuth(cfg.Node.WebUsername, cfg.Node.WebPassword),
+		configPath: configPath,
+		nodeName:   nodeName,
 		startTime: time.Now(),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
@@ -87,6 +90,10 @@ func (s *Server) Start(ctx context.Context, port int) error {
 	}
 
 	mux := http.NewServeMux()
+
+	// Setup wizard (first-run) — no auth, no middleware
+	mux.HandleFunc("/setup", s.handleSetupForm)
+	mux.HandleFunc("/api/setup", s.handleSetupSave)
 
 	// Auth (login/logout) — no middleware required
 	mux.HandleFunc("/api/login", s.auth.Login)
@@ -119,8 +126,8 @@ func (s *Server) Start(ctx context.Context, port int) error {
 	}
 	mux.Handle("/", http.FileServer(http.FS(staticSub)))
 
-	// Wrap with auth middleware
-	handler := s.auth.Middleware(mux)
+	// Wrap with setup check + auth middleware
+	handler := s.setupMiddleware(s.auth.Middleware(mux))
 
 	// Start session cleanup if auth enabled
 	if s.auth.Enabled() {
@@ -158,6 +165,34 @@ func (s *Server) Start(ctx context.Context, port int) error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+// --- setup / first-run ------------------------------------------------------
+
+// needsSetup returns true if the config file doesn't exist on disk yet.
+func (s *Server) needsSetup() bool {
+	if s.configPath == "" {
+		return false
+	}
+	_, err := os.Stat(s.configPath)
+	return os.IsNotExist(err)
+}
+
+// setupMiddleware redirects all traffic to /setup when no config exists.
+// Runs before the auth middleware so unconfigured nodes don't prompt for login.
+func (s *Server) setupMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.needsSetup() {
+			// Allow setup pages and assets through without auth
+			if r.URL.Path == "/setup" || r.URL.Path == "/api/setup" || r.URL.Path == "/logo.svg" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			http.Redirect(w, r, "/setup", http.StatusFound)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // --- shared helpers ---------------------------------------------------------

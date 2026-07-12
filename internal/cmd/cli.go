@@ -387,7 +387,7 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 
 	// Start web dashboard server if web_port is configured
 	if cfg.Node.WebPort > 0 {
-		wsrv := web.New(h, tm, cm, cfg, cfg.Node.Name)
+		wsrv := web.New(h, tm, cm, cfg, cfg.Node.Name, cfgPath)
 		go func() {
 			if err := wsrv.Start(ctx, cfg.Node.WebPort); err != nil {
 				slog.Warn("web dashboard stopped", "err", err)
