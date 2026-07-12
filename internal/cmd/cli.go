@@ -46,7 +46,11 @@ type Command struct {
 }
 
 func ParseAndRun(ctx context.Context, args []string) error {
+	// Windows double-click: no args → auto-install as service
 	if len(args) < 2 {
+		if runtime.GOOS == "windows" {
+			return windowsSetupFlow()
+		}
 		return printUsage()
 	}
 

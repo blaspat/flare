@@ -1,6 +1,6 @@
 # Flare on Windows
 
-The easiest way to run Flare on Windows — one command to install, start, and browse.
+Download, double-click, done.
 
 ---
 
@@ -8,29 +8,38 @@ The easiest way to run Flare on Windows — one command to install, start, and b
 
 1. Go to the [releases page](https://github.com/blaspat/flare/releases)
 2. Download `flare_<version>_windows_amd64.exe` (or `_windows_arm64.exe` for ARM devices like Surface Pro X)
-3. Rename it to `flare.exe` and place it in `C:\flare\` (or any folder you prefer)
+3. Place it anywhere — `C:\flare\`, your desktop, wherever
 
 ---
 
-## One-command setup
+## Setup
 
-Open **Command Prompt as Administrator** (right-click → Run as administrator), then:
+**Double-click `flare.exe`.**
+
+Windows will prompt "Do you want to allow this app to make changes to your device?" — click **Yes**. That's the UAC prompt asking for admin rights to install the service.
+
+Flare will:
+
+1. **Download NSSM** automatically if needed
+2. **Install itself as a Windows service** — runs in the background, starts on boot
+3. **Start the service**
+4. **Open your browser** to the setup wizard at `http://localhost:9722`
+5. Show "Press any key to exit" — close the window, Flare is running
+
+That's it. No terminal, no commands, no config files to touch.
+
+### If you prefer the terminal
 
 ```cmd
 cd C:\flare
 flare.exe start
 ```
 
-That's it. Flare will:
+Same result — the UAC prompt asks once, then it installs, starts, and opens the browser.
 
-1. **Download NSSM** (Non-Sucking Service Manager) automatically if needed
-2. **Install itself as a Windows service** — auto-starts on boot
-3. **Start the service** and open the dashboard in your browser
-4. Exit — Flare is running in the background
+---
 
-Your terminal is free. No need to leave it open.
-
-### Setup wizard
+## Setup wizard
 
 Open **http://localhost:9722** in your browser:
 - Set your **node name** (e.g. `my-laptop`)
@@ -38,7 +47,7 @@ Open **http://localhost:9722** in your browser:
 - Add **watch directories** to sync
 - Click Save
 
-After saving, restart with `flare.exe stop && flare.exe start` to apply mesh settings.
+After saving, restart with `flare.exe stop` then `flare.exe start` to apply mesh settings.
 
 ---
 
@@ -53,24 +62,6 @@ After saving, restart with `flare.exe stop && flare.exe start` to apply mesh set
 | `flare.exe status` | Show node and mesh status |
 | `flare.exe dashboard` | Open the web dashboard in browser |
 | `flare.exe run <job>` | Run a cron job immediately |
-
-All commands except `start` work whether or not the service is running.
-
----
-
-## View the dashboard
-
-After starting, open **http://localhost:9722** in any browser.
-
-The first time you visit, the **setup wizard** walks you through config. After that, it shows the live dashboard with peers, sync status, and cron jobs.
-
-To enable password protection, set credentials in the setup wizard or manually in `flare.toml`:
-
-```toml
-[node]
-web_username = "admin"
-web_password = "your-password"
-```
 
 ---
 
@@ -121,7 +112,7 @@ Your config and data are preserved.
 
 ### "Access is denied"
 
-Run **Command Prompt as Administrator** before running `flare start` or `flare install`.
+If double-clicking doesn't prompt for admin, right-click `flare.exe` → **Run as administrator**.
 
 ### "Flare" is not recognized
 
