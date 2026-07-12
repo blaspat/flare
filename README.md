@@ -20,7 +20,7 @@ TOML config file.
   with resume, vector clocks for causal ordering across the mesh
 - **Distributed cron** — Leader-elected (lowest-name) job scheduling with
   automatic handoff on node failure
-- **Single binary** — Builds for Linux amd64/arm64, macOS amd64/arm64, and Windows amd64/arm64. No runtime deps.
+- **Single binary** — Builds for Linux, macOS, and Windows (amd64 + arm64). No runtime deps.
   Configure with one TOML file.
 
 ## Quickstart
@@ -45,7 +45,17 @@ cp config.example.toml flare.toml
 
 ## Install
 
-### From source
+Choose your OS:
+
+- **[LINUX.md](LINUX.md)** — Debian/Ubuntu, Fedora/RHEL, Arch, systemd service, firewall
+- **[MACOS.md](MACOS.md)** — Intel & Apple Silicon, LaunchAgent, Gatekeeper
+- **[WINDOWS.md](WINDOWS.md)** — NSSM service, Task Scheduler, troubleshooting
+
+### Pre-built binaries
+
+Download the latest release from the [releases page](https://github.com/blaspat/flare/releases).
+
+### Build from source
 
 ```bash
 git clone https://github.com/blaspat/flare.git
@@ -56,25 +66,11 @@ go build -o /usr/local/bin/flare .
 ### Cross-platform build
 
 ```bash
-# Build for linux/amd64, linux/arm64, windows/amd64, windows/arm64
+# Build for all supported platforms
 ./scripts/build.sh
 
 # Output in dist/flare-<version>/
 ```
-
-### Windows
-
-See **[WINDOWS.md](WINDOWS.md)** for a complete setup guide — download, config, service install with NSSM, troubleshooting.
-
-Quick start:
-
-```cmd
-flare.exe start
-```
-
-### Pre-built binaries
-
-Download the latest release from the [releases page](https://github.com/blaspat/flare/releases).
 
 ## Configuration
 
