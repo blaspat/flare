@@ -116,3 +116,10 @@
 - [x] Update build script for Windows targets
 - [x] Update GitHub release workflow for Windows binaries
 - [x] Add Windows install instructions to README
+
+## Phase 9: Setup Wizard ✅ (2026-07-12)
+- [x] Web-based config wizard at /setup
+- [x] Multi-section form (node, dashboard, peers, watch dirs)
+- [x] POST /api/setup saves config to disk
+- [x] Auto-redirect to /setup on first run when no config exists
+- [x] Dashboard now enabled by default (web_port = 9722)
