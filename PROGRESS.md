@@ -131,3 +131,5 @@
 - [x] `flare stop` / `flare uninstall` — service management
 - [x] Service runs with `_FLARE_SERVICE=1` env for startup detection
 - [x] Simplified WINDOWS.md reflecting the one-command flow
+- [x] Double-click `flare.exe` triggers full setup with UAC elevation
+- [x] Console stays open with "Press any key to exit" after setup
