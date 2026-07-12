@@ -67,6 +67,12 @@ func ParseAndRun(ctx context.Context, args []string) error {
 		return runCmd(ctx, cfgPath, args[2:])
 	case "dashboard":
 		return dashboardCmd(cfgPath)
+	case "install":
+		return installCmd(cfgPath)
+	case "stop":
+		return stopCmd()
+	case "uninstall":
+		return uninstallCmd()
 	case "init":
 		return initCmd(ctx, args[2:])
 	case "help", "--help", "-h":
@@ -92,6 +98,11 @@ func printUsage() error {
  ` + term.Green + `flare dashboard` + term.Reset + `          Open the web dashboard in browser
  ` + term.Green + `flare run` + term.Reset + ` <job-name>     Run a cron job immediately
  ` + term.Green + `flare init` + term.Reset + `               Generate a config file interactively
+ ` + term.Bold + `Windows only:` + term.Reset + `
+ ` + term.Green + `flare install` + term.Reset + `            Install as a Windows service (NSSM)
+ ` + term.Green + `flare start` + term.Reset + `             Start the Windows service (auto-installs)
+ ` + term.Green + `flare stop` + term.Reset + `              Stop the Windows service
+ ` + term.Green + `flare uninstall` + term.Reset + `          Remove the Windows service
  ` + term.Green + `flare help` + term.Reset + `               Show this help
 
 ` + term.Dim + `Config: FLARE_CONFIG env or ./flare.toml` + term.Reset + `
@@ -131,6 +142,27 @@ func startCmd(ctx context.Context, cfgPath string, args []string) error {
 		}
 		fmt.Printf("Flare started in background (PID %d)\n", pid)
 		return nil
+	}
+
+	// On Windows, auto-install as a Windows service when run from the terminal.
+	// The NSSM service runner sets _FLARE_SERVICE=1 so this block is skipped
+	// when the binary is launched as a service.
+	if runtime.GOOS == "windows" && os.Getenv("_FLARE_SERVICE") == "" {
+		nssmPath, err := windowsEnsureNSSM()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not install service (%v) — running in foreground.\n", err)
+			// fall through to foreground mode
+		}
+		if nssmPath != "" {
+			windowsStartService()
+			time.Sleep(2 * time.Second)
+			windowsOpenBrowser("http://localhost:9722")
+			fmt.Printf("\nFlare is running as a Windows service.\n")
+			fmt.Printf("  Dashboard: http://localhost:9722\n")
+			fmt.Printf("  Logs:      %s\\logs\\\n", filepath.Dir(nssmPath))
+			fmt.Printf("  Run '%s stop' to stop the service.\n", os.Args[0])
+			return nil
+		}
 	}
 
 	cfg, err := config.Load(cfgPath)

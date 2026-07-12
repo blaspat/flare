@@ -123,3 +123,11 @@
 - [x] POST /api/setup saves config to disk
 - [x] Auto-redirect to /setup on first run when no config exists
 - [x] Dashboard now enabled by default (web_port = 9722)
+
+## Phase 10: Windows NSSM Auto-Install ✅ (2026-07-12)
+- [x] Auto-download NSSM on first run if not present
+- [x] `flare start` installs service + starts it, then exits
+- [x] `flare install` — explicit service install
+- [x] `flare stop` / `flare uninstall` — service management
+- [x] Service runs with `_FLARE_SERVICE=1` env for startup detection
+- [x] Simplified WINDOWS.md reflecting the one-command flow

@@ -1,6 +1,6 @@
 # Flare on Windows
 
-This guide covers setting up Flare on Windows — from download to running as a background service.
+The easiest way to run Flare on Windows — one command to install, start, and browse.
 
 ---
 
@@ -12,107 +12,65 @@ This guide covers setting up Flare on Windows — from download to running as a 
 
 ---
 
-## Quick start
+## One-command setup
 
-Open **Command Prompt** or **PowerShell** and navigate to your Flare folder:
+Open **Command Prompt as Administrator** (right-click → Run as administrator), then:
 
 ```cmd
 cd C:\flare
-```
-
-### Interactive setup
-
-```cmd
-flare.exe init
-```
-
-This walks you through:
-- **Node name** — unique name for this machine (e.g. `my-laptop`)
-- **Listen address** — default `:9721` is fine unless you have a port conflict
-- **Data directory** — where Flare stores its state and synced files
-- **Peers** — other Flare nodes to connect to (e.g. `ws://vpn-instance:9721` for your VPS, or `ws://192.168.1.50:9721` for a local machine)
-- **Watch directories** — folders to keep in sync across the mesh
-- **Cron jobs** — optional scheduled commands
-
-Your config is written to `flare.toml`.
-
-### Start in terminal
-
-```cmd
 flare.exe start
 ```
 
-You'll see logs as Flare connects to peers and starts syncing. Leave the terminal open to keep it running.
+That's it. Flare will:
 
-### View the dashboard
+1. **Download NSSM** (Non-Sucking Service Manager) automatically if needed
+2. **Install itself as a Windows service** — auto-starts on boot
+3. **Start the service** and open the dashboard in your browser
+4. Exit — Flare is running in the background
 
-Open **http://localhost:9722**) in your browser. Add credentials in `flare.toml` if you want password protection:
+Your terminal is free. No need to leave it open.
+
+### Setup wizard
+
+Open **http://localhost:9722** in your browser:
+- Set your **node name** (e.g. `my-laptop`)
+- Add **peers** to connect to (e.g. `ws://your-vps.local:9721`)
+- Add **watch directories** to sync
+- Click Save
+
+After saving, restart with `flare.exe stop && flare.exe start` to apply mesh settings.
+
+---
+
+## Commands
+
+| Command | What it does |
+|---------|-------------|
+| `flare.exe start` | Install service + start if needed, then exit |
+| `flare.exe stop` | Stop the Windows service |
+| `flare.exe install` | Install/reinstall the service (downloads NSSM if needed) |
+| `flare.exe uninstall` | Stop and remove the service |
+| `flare.exe status` | Show node and mesh status |
+| `flare.exe dashboard` | Open the web dashboard in browser |
+| `flare.exe run <job>` | Run a cron job immediately |
+
+All commands except `start` work whether or not the service is running.
+
+---
+
+## View the dashboard
+
+After starting, open **http://localhost:9722** in any browser.
+
+The first time you visit, the **setup wizard** walks you through config. After that, it shows the live dashboard with peers, sync status, and cron jobs.
+
+To enable password protection, set credentials in the setup wizard or manually in `flare.toml`:
 
 ```toml
 [node]
 web_username = "admin"
 web_password = "your-password"
 ```
-
----
-
-## Run as a Windows service (recommended)
-
-Running in a terminal is fine for testing. For always-on operation, use **NSSM** (Non-Sucking Service Manager) to run Flare as a proper Windows service that starts on boot.
-
-### Install NSSM
-
-Download from [nssm.cc/download](https://nssm.cc/download) — grab `nssm-2.24.zip` and extract `win64/nssm.exe` to `C:\Windows\system32\` (so it's available everywhere).
-
-### Install the Flare service
-
-```cmd
-nssm install Flare "C:\flare\flare.exe" "start"
-nssm set Flare AppDirectory "C:\flare"
-nssm set Flare DisplayName "Flare Edge Mesh"
-nssm set Flare Description "P2P edge mesh server for file sync and distributed cron"
-nssm set Flare Start SERVICE_AUTO_START
-nssm set Flare AppStdout "C:\flare\flare.log"
-nssm set Flare AppStderr "C:\flare\flare.log"
-nssm set Flare AppRotateFiles 1
-nssm set Flare AppRotateSeconds 86400
-```
-
-### Start
-
-```cmd
-nssm start Flare
-```
-
-### Managing the service
-
-| Action | Command |
-|--------|---------|
-| Stop | `nssm stop Flare` |
-| Status | `nssm status Flare` |
-| Restart | `nssm restart Flare` |
-| Remove | `nssm remove Flare confirm` |
-| Edit GUI | `nssm edit Flare` (opens a settings window) |
-
-After this, Flare starts automatically on every boot. The dashboard is always available at **http://localhost:9722**.
-
----
-
-## Alternative: Task Scheduler
-
-If you prefer not to use NSSM, use Windows Task Scheduler:
-
-```cmd
-schtasks /create /tn "Flare" ^
-  /tr "C:\flare\flare.exe start" ^
-  /sc onstart ^
-  /delay 0000:30 ^
-  /ru SYSTEM ^
-  /rl HIGHEST ^
-  /f
-```
-
-This starts Flare 30 seconds after boot as the SYSTEM user.
 
 ---
 
@@ -148,10 +106,12 @@ poll_interval = "5s"
 
 ## Updating
 
-1. Download the new `flare.exe`
-2. Stop the service: `nssm stop Flare`
-3. Replace `C:\flare\flare.exe`
-4. Start the service: `nssm start Flare`
+```cmd
+flare.exe stop
+:: Replace flare.exe with the new version
+copy /Y new-flare.exe flare.exe
+flare.exe start
+```
 
 Your config and data are preserved.
 
@@ -159,13 +119,13 @@ Your config and data are preserved.
 
 ## Troubleshooting
 
-### "Access is denied" on service install
+### "Access is denied"
 
-Run Command Prompt **as Administrator** before running `nssm install`.
+Run **Command Prompt as Administrator** before running `flare start` or `flare install`.
 
 ### "Flare" is not recognized
 
-Make sure you're in the right folder (`cd C:\flare`) or add the folder to your PATH:
+Make sure you're in the right folder (`cd C:\flare`) or add it to your PATH:
 
 ```cmd
 setx PATH "%PATH%;C:\flare"
@@ -175,7 +135,7 @@ Then restart your terminal.
 
 ### Can't see the dashboard
 
-Make sure `web_port` is set in `flare.toml`. Default is 9722. Check `http://localhost:9722`.
+Check **http://localhost:9722**. The dashboard is enabled by default (port 9722).
 
 ### Firewall blocking
 
